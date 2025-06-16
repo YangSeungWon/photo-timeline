@@ -1,16 +1,23 @@
 from uuid import UUID
 from typing import List
+import logging
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlmodel import Session, select
 
 from ..core.database import get_db
 from ..core.deps import get_current_active_user
 from ..core.storage import save_upload_file
+from ..core.queues import default_queue
 from ..models.user import User
 from ..models.group import Group
 from ..models.membership import Membership, MembershipStatus
 from ..models.photo import Photo
+from ..models.meeting import Meeting
 from ..schemas.photo import PhotoResponse, PhotoUploadResponse
+from ..worker_tasks import process_photo
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -47,27 +54,73 @@ async def upload_photo(
 
     # Save file
     filename, file_path = await save_upload_file(file, str(group_id))
+    file_abs_path = Path(file_path).resolve()
+
+    # Create or get default meeting for the group
+    default_meeting = db.exec(
+        select(Meeting).where(
+            Meeting.group_id == group_id, Meeting.title == "Default Meeting"
+        )
+    ).first()
+
+    if not default_meeting:
+        default_meeting = Meeting(
+            group_id=group_id,
+            title="Default Meeting",
+            description="Auto-created meeting for uploaded photos",
+        )
+        db.add(default_meeting)
+        db.commit()
+        db.refresh(default_meeting)
 
     # Create photo record
     photo = Photo(
-        filename=filename,
-        file_path=file_path,
-        # Note: EXIF processing will be done by background worker
-        # For now, we just store the basic info
+        group_id=group_id,
+        uploader_id=current_user.id,
+        meeting_id=default_meeting.id,
+        filename_orig=filename,
+        file_size=file.size or 0,
+        file_hash="",  # Will be calculated by worker
+        mime_type=file.content_type or "application/octet-stream",
+        is_processed=False,
     )
 
     db.add(photo)
     db.commit()
     db.refresh(photo)
 
-    # TODO: Enqueue background task for EXIF extraction and clustering
+    # Enqueue background task for processing
+    try:
+        job = default_queue.enqueue(
+            process_photo,
+            photo_id=str(photo.id),
+            file_path=str(file_abs_path),
+            job_timeout=300,  # 5 minutes
+        )
+        logger.info(f"Enqueued photo processing job {job.id} for photo {photo.id}")
 
-    return PhotoUploadResponse(
-        id=photo.id,
-        filename=filename,
-        status="uploaded",
-        message="Photo uploaded successfully. Processing in background.",
-    )
+        return PhotoUploadResponse(
+            id=photo.id,
+            filename=filename,
+            status="uploaded",
+            message="Photo uploaded successfully. Processing in background.",
+        )
+    except Exception as e:
+        logger.error(f"Failed to enqueue photo processing: {e}")
+        # Clean up the photo record if we can't process it
+        db.delete(photo)
+        db.commit()
+
+        # Try to remove the file
+        try:
+            file_abs_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to queue photo for processing",
+        )
 
 
 @router.get("", response_model=List[PhotoResponse])

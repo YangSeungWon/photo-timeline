@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # --- Backend API (FastAPI) ---
@@ -36,13 +36,18 @@ services:
   worker:
     build:
       context: ./backend
-    command: rq worker -u redis://redis:6379 high default low
+    command: ["python", "-u", "worker.py"]
     volumes:
       - ./backend:/app
       - storage_data:/srv/photo-timeline/storage
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres/phototimeline
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       - redis
       - postgres
+      - backend
 
   # --- Database (PostgreSQL + PostGIS) ---
   postgres:
@@ -74,4 +79,4 @@ services:
 
 volumes:
   postgres_data:
-  storage_data: 
+  storage_data:

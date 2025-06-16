@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from libs.photo_core.exif import (
+from photo_core.exif import (
     extract_exif,
     suggest_timestamps,
     _convert_gps_to_decimal,

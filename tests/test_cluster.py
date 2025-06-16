@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, timedelta
-from libs.photo_core.cluster import (
+from photo_core.cluster import (
     cluster_photos_into_meetings,
     generate_meeting_track,
     DEFAULT_MEETING_GAP_HOURS,

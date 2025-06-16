@@ -17,6 +17,9 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
 
     # File Storage
     UPLOAD_DIR: str = "./uploads"
@@ -30,6 +33,10 @@ class Settings(BaseSettings):
         ".mov",
         ".mp4",
     }
+
+    # Thumbnail settings
+    THUMBNAIL_SIZE: tuple = (512, 512)
+    THUMBNAIL_QUALITY: int = 85
 
     # Development settings
     debug: bool = False

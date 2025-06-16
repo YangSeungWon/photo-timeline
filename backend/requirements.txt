@@ -19,6 +19,9 @@ email-validator==2.2.0
 redis==5.0.1
 rq==1.15.1
 
+# Image processing
+Pillow==10.1.0
+
 # Our internal library
 # In a real setup, this would be a proper package.
 # We will install it in editable mode from the local path.
@@ -26,4 +29,5 @@ rq==1.15.1
 
 # Development
 pytest==7.4.3
-pytest-asyncio==0.21.1 
+pytest-asyncio==0.21.1
+fakeredis==2.21.1 
