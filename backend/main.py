@@ -2,6 +2,14 @@ import logging
 
 from fastapi import FastAPI
 
+import sys
+import os
+
+sys.path.append(os.path.dirname(__file__))
+
+from app.core.config import settings
+from app.core.database import create_db_and_tables
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -20,8 +28,11 @@ app = FastAPI(
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up Photo-Timeline API...")
-    # Here you would initialize DB connections, etc.
-    pass
+    # Create database tables in development mode
+    if settings.auto_create_tables:
+        logger.info("Auto-creating database tables...")
+        create_db_and_tables()
+        logger.info("Database tables created successfully!")
 
 
 @app.on_event("shutdown")

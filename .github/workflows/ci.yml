@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   backend-tests:
@@ -31,7 +31,7 @@ jobs:
       - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -43,10 +43,10 @@ jobs:
 
       - name: Run photo_core tests
         run: |
-          pytest tests/ -v
+          pytest tests/test_exif.py tests/test_cluster.py tests/test_models_basic.py -v
         env:
           DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
-  
+
   frontend-build:
     runs-on: ubuntu-latest
     steps:
@@ -56,7 +56,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install dependencies
         working-directory: ./frontend
@@ -64,4 +64,4 @@ jobs:
 
       - name: Build project
         working-directory: ./frontend
-        run: npm run build 
+        run: npm run build

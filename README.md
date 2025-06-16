@@ -95,7 +95,7 @@ See [`libs/photo_core/README.md`](libs/photo_core/README.md) for detailed usage.
 ## 📋 Roadmap
 
 - [x] **Phase 1**: Core library with EXIF extraction and clustering
-- [ ] **Phase 2**: Database schema and FastAPI endpoints
+- [x] **Phase 2**: Database schema and FastAPI endpoints
 - [ ] **Phase 3**: File upload and storage service
 - [ ] **Phase 4**: Background worker for photo processing
 - [ ] **Phase 5**: Frontend with photo grid and map visualization
@@ -113,3 +113,58 @@ See [`libs/photo_core/README.md`](libs/photo_core/README.md) for detailed usage.
 ## 📄 License
 
 [Add your license here]
+
+## Development Status
+
+### ✅ Item #1: Package & unit-test photo_core
+
+- **Status**: COMPLETED ✅
+- **EXIF Extraction**: Support for JPEG, PNG, TIFF, HEIC (via exiftool), and video files
+- **Time Suggestions**: Ported prev+1s, middle, next-1s logic from legacy GUI
+- **Photo Clustering**: 4-hour default gap with UUID meeting assignment
+- **GPS Track Generation**: Leaflet-compatible polylines for mapping
+- **Testing**: 21/21 tests passing with comprehensive coverage
+- **CI Integration**: Automated testing in GitHub Actions
+
+### ✅ Item #2: Database schema with SQLModel
+
+- **Status**: COMPLETED ✅
+- **SQLModel Models**: Complete schema with User, Group, Membership, Meeting, Photo, Comment
+- **PostGIS Integration**: Geometry columns for GPS points and tracks with SRID 4326
+- **Alembic Migrations**: Initial schema migration with proper foreign keys and indexes
+- **Comprehensive Testing**: 9 additional tests covering all model relationships
+- **Development Setup**: Auto-table creation for rapid development iteration
+- **Production Ready**: Full migration support for PostgreSQL + PostGIS deployment
+
+### 🔄 Item #3: Basic FastAPI endpoints (NEXT)
+
+- User authentication (register, login, JWT tokens)
+- Group management (create, join, invite)
+- Photo upload with EXIF processing
+- Meeting clustering and retrieval
+
+### 📋 Remaining Items
+
+4. Frontend auth + group selection
+5. Photo upload UI with drag-and-drop
+6. Meeting timeline view with map
+7. Deployment configuration
+
+## Database Schema
+
+### Core Tables
+
+- **`user`**: Authentication and profile management
+- **`group`**: Photo-sharing communities with privacy controls
+- **`membership`**: Many-to-many user-group relationships with roles
+- **`meeting`**: Photo clusters with time ranges and GPS tracks
+- **`photo`**: Images with EXIF data, GPS coordinates, and file metadata
+- **`comment`**: Threaded discussions on photos
+
+### Key Features
+
+- **PostGIS Geometry**: GPS points (`POINT`) and tracks (`LINESTRING`) with SRID 4326
+- **UUID Primary Keys**: Distributed-friendly identifiers
+- **Comprehensive Indexing**: Optimized for time-based and spatial queries
+- **Enum Types**: Type-safe membership roles and statuses
+- **Foreign Key Constraints**: Data integrity across all relationships
