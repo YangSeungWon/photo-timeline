@@ -1,0 +1,21 @@
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.7
+
+# Database (PostgreSQL + PostGIS)
+sqlmodel>=0.0.14
+psycopg2-binary>=2.9.9
+
+# Auth
+bcrypt>=4.1.0
+python-jose[cryptography]>=3.3.0
+
+# Background Jobs
+redis>=5.0.0
+rq>=1.16.0
+
+# Our internal library
+# In a real setup, this would be a proper package.
+# We will install it in editable mode from the local path.
+# -e ./libs/photo_core 

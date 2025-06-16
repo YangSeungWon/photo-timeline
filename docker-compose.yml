@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # --- Backend API (FastAPI) ---
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      # This will be the main storage for original photos and thumbnails
+      - storage_data:/srv/photo-timeline/storage
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres/phototimeline
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # --- Frontend (Next.js) ---
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+
+  # --- Background Worker (RQ) ---
+  worker:
+    build:
+      context: ./backend
+    command: rq worker -u redis://redis:6379 high default low
+    volumes:
+      - ./backend:/app
+      - storage_data:/srv/photo-timeline/storage
+    depends_on:
+      - redis
+      - postgres
+
+  # --- Database (PostgreSQL + PostGIS) ---
+  postgres:
+    image: postgis/postgis:16-3.4
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=phototimeline
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d phototimeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Cache (Redis) ---
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # --- Web Server (Nginx) ---
+  # Optional, for a more production-like setup.
+  # For now, we access backend and frontend on their own ports.
+  # A full nginx config would be added later to handle routing.
+
+volumes:
+  postgres_data:
+  storage_data: 
