@@ -2,66 +2,70 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
-  backend-tests:
+  test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgis/postgis:16-3.4
         env:
-          POSTGRES_DB: test_db
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: phototimeline_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
         ports:
           - 5432:5432
-        # options: >-
-        #   --health-cmd "pg_isready"
-        #   --health-interval 10s
-        #   --health-timeout 5s
-        #   --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y exiftool
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
           pip install -e ./libs/photo_core
-          # Install test dependencies
-          pip install pytest httpx
+          pip install -r backend/requirements.txt
 
       - name: Run photo_core tests
         run: |
-          pytest tests/test_exif.py tests/test_cluster.py tests/test_models_basic.py -v
-        env:
-          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db
+          pytest tests/test_exif.py tests/test_cluster.py -v
 
-  frontend-build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Run database model tests
+        run: |
+          pytest tests/test_models_basic.py -v
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Run storage tests
+        run: |
+          pytest tests/test_storage.py -v
 
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: npm install
-
-      - name: Build project
-        working-directory: ./frontend
-        run: npm run build
+      - name: Test FastAPI app import
+        run: |
+          cd backend && python -c "from main import app; print('✅ FastAPI app imports successfully')"

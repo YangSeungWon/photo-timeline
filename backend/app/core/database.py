@@ -1,27 +1,20 @@
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-from sqlmodel import SQLModel
-from typing import Iterator
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 
 from .config import settings
 
-
-# Create engine with connection pooling and health checks
+# Create engine with the updated settings
 engine = create_engine(
-    settings.database_url,
+    settings.DATABASE_URL,
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
 )
 
-
-def create_db_and_tables():
-    """Create database tables. Used in development mode."""
-    SQLModel.metadata.create_all(engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def get_session() -> Iterator[Session]:
-    """Dependency to get database session."""
+def get_db() -> Session:
+    """Get database session."""
     with Session(engine) as session:
         yield session

@@ -1,24 +1,29 @@
 # Web Framework
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-python-multipart>=0.0.7
-pydantic-settings>=2.1.0
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic-settings==2.1.0
 
 # Database (PostgreSQL + PostGIS)
-sqlmodel>=0.0.14
-psycopg2-binary>=2.9.9
-geoalchemy2>=0.14.0
-alembic>=1.13.0
+sqlmodel==0.0.14
+psycopg[binary]==3.2.9
+geoalchemy2==0.14.2
+alembic==1.13.1
 
 # Auth
-bcrypt>=4.1.0
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+email-validator==2.2.0
 
 # Background Jobs
-redis>=5.0.0
-rq>=1.16.0
+redis==5.0.1
+rq==1.15.1
 
 # Our internal library
 # In a real setup, this would be a proper package.
 # We will install it in editable mode from the local path.
-# -e ./libs/photo_core 
+# -e ./libs/photo_core
+
+# Development
+pytest==7.4.3
+pytest-asyncio==0.21.1 

@@ -1,26 +1,38 @@
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    """Application settings."""
+
     # Database
-    database_url: str = "postgresql://user:password@localhost/phototimeline"
+    DATABASE_URL: str = "postgresql://user:password@localhost:5432/phototimeline"
+    AUTO_CREATE_TABLES: bool = False
+
+    # JWT Authentication
+    SECRET_KEY: str = "your-secret-key-change-in-production"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # Redis
-    redis_url: str = "redis://localhost:6379"
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # File Storage
+    UPLOAD_DIR: str = "./uploads"
+    MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
+    ALLOWED_EXTENSIONS: set = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".tiff",
+        ".heic",
+        ".mov",
+        ".mp4",
+    }
 
     # Development settings
-    auto_create_tables: bool = False
     debug: bool = False
-
-    # Security
-    secret_key: str = "your-secret-key-change-in-production"
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-
-    # File storage
-    storage_path: str = "/srv/photo-timeline/storage"
-    max_file_size: int = 50 * 1024 * 1024  # 50MB
 
     class Config:
         env_file = ".env"
