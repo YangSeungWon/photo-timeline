@@ -6,7 +6,7 @@ pydantic-settings==2.1.0
 
 # Database (PostgreSQL + PostGIS)
 sqlmodel==0.0.14
-psycopg[binary]==3.2.9
+psycopg2-binary==2.9.9
 geoalchemy2==0.14.2
 alembic==1.13.1
 

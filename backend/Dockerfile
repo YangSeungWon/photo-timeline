@@ -9,18 +9,18 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy backend requirements first for better caching
+COPY backend/requirements.txt ./requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the photo_core library and install it
-COPY ../libs/photo_core /tmp/photo_core
+COPY libs/photo_core /tmp/photo_core
 RUN pip install -e /tmp/photo_core
 
-# Copy application code
-COPY . .
+# Copy backend application code
+COPY backend /app
 
 # Create storage directory
 RUN mkdir -p /srv/photo-timeline/storage

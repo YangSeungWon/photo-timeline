@@ -4,7 +4,8 @@ services:
   # --- Backend API (FastAPI) ---
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     # ports removed (exposed internally only)
     volumes:
       - ./backend:/app
@@ -33,7 +34,8 @@ services:
   # --- Background Worker (RQ) ---
   worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     command: ["python", "-u", "worker.py"]
     volumes:
       - ./backend:/app

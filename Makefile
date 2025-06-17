@@ -8,13 +8,10 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Development
-dev: ## Start full development environment (backend + frontend + worker)
-	@echo "🚀 Starting full development environment..."
-	docker compose up -d postgres redis
-	@echo "⏳ Waiting for services to be ready..."
-	sleep 3
-	@echo "🔧 Starting backend, worker, and frontend..."
-	@make -j3 dev-backend dev-worker dev-frontend
+dev: ## Start full development environment with Docker Compose (all services)
+	@echo "🚀 Starting full dockerised development environment..."
+	docker compose up -d --build
+	@echo "✅ All services are up! Access the app at http://localhost:3067"
 
 dev-backend: ## Start backend development server
 	@echo "🐍 Starting FastAPI backend..."
