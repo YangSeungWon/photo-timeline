@@ -7,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useAuth } from '@/contexts/AuthContext'
 import { LoginRequest } from '@/lib/api'
+import Link from 'next/link'
 
 const loginSchema = z.object({
     email: z.string().email('Please enter a valid email address'),
@@ -114,6 +115,15 @@ export default function LoginPage() {
                                 'Sign in'
                             )}
                         </button>
+                    </div>
+
+                    <div className="text-center">
+                        <span className="text-sm text-gray-600">
+                            Don't have an account?{' '}
+                            <Link href="/register" className="font-medium text-blue-600 hover:text-blue-500">
+                                Create one
+                            </Link>
+                        </span>
                     </div>
                 </form>
             </div>
