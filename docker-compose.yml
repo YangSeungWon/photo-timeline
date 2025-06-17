@@ -5,8 +5,7 @@ services:
   backend:
     build:
       context: ./backend
-    ports:
-      - "8000:8000"
+    # ports removed (exposed internally only)
     volumes:
       - ./backend:/app
       # This will be the main storage for original photos and thumbnails
@@ -23,8 +22,7 @@ services:
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "3000:3000"
+    # ports removed (handled by nginx proxy)
     volumes:
       - ./frontend:/app
       - /app/node_modules
@@ -52,8 +50,6 @@ services:
   # --- Database (PostgreSQL + PostGIS) ---
   postgres:
     image: postgis/postgis:16-3.4
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -69,13 +65,17 @@ services:
   # --- Cache (Redis) ---
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
 
   # --- Web Server (Nginx) ---
-  # Optional, for a more production-like setup.
-  # For now, we access backend and frontend on their own ports.
-  # A full nginx config would be added later to handle routing.
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "3067:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
 
 volumes:
   postgres_data:
