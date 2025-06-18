@@ -46,10 +46,6 @@ export default function RegisterPage() {
             await api.post('/auth/register', registerData)
 
             setSuccess(true)
-            // Redirect to login after successful registration
-            setTimeout(() => {
-                router.push('/login?message=Registration successful! Please sign in.')
-            }, 2000)
         } catch (err) {
             const apiError = handleApiError(err)
             setError(apiError.detail)
@@ -67,11 +63,29 @@ export default function RegisterPage() {
                             </svg>
                         </div>
                         <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                            Registration Successful!
+                            Check Your Email!
                         </h2>
                         <p className="mt-2 text-center text-sm text-gray-600">
-                            Redirecting you to the login page...
+                            We've sent a verification link to your email address.
+                            Please check your email and click the link to activate your account.
                         </p>
+                        <p className="mt-4 text-center text-sm text-gray-500">
+                            Don't see the email? Check your spam folder or{' '}
+                            <button
+                                className="text-blue-600 hover:text-blue-500 underline"
+                                onClick={() => window.location.reload()}
+                            >
+                                try registering again
+                            </button>
+                        </p>
+                        <div className="mt-6">
+                            <Link
+                                href="/login"
+                                className="btn-primary w-full"
+                            >
+                                Go to Login
+                            </Link>
+                        </div>
                     </div>
                 </div>
             </div>

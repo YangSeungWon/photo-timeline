@@ -57,16 +57,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         try {
             setIsLoading(true)
 
-            // Create form data for OAuth2 login
-            const formData = new FormData()
-            formData.append('username', credentials.email)
-            formData.append('password', credentials.password)
-
-            const response = await api.post<TokenResponse>(endpoints.login, formData, {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-            })
+            // Send JSON login request
+            const response = await api.post<TokenResponse>(endpoints.login, credentials)
 
             const { access_token, refresh_token } = response.data
 

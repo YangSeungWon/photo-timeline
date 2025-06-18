@@ -13,6 +13,12 @@ from app.core.config import settings
 from app.core.database import engine
 from app.api import api_router
 
+# Import all models to register them with SQLModel metadata
+from app.models.user import User
+# Import other models here as they are created
+# from app.models.group import Group
+# from app.models.photo import Photo
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -43,11 +49,23 @@ app.include_router(api_router)
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up Photo Timeline API...")
-    # Create database tables in development mode
+    
+    # Import here to avoid circular imports
+    from app.core.database import engine
+    
+    # Create database tables if database is available
     if settings.AUTO_CREATE_TABLES:
-        logger.info("Auto-creating database tables...")
-        SQLModel.metadata.create_all(engine)
-        logger.info("Database tables created successfully!")
+        if engine:
+            try:
+                logger.info("Auto-creating database tables...")
+                SQLModel.metadata.create_all(engine)
+                logger.info("Database tables created successfully!")
+            except Exception as e:
+                logger.error(f"Failed to create database tables: {e}")
+                logger.error("Database functionality may not work properly.")
+        else:
+            logger.warning("Database engine not available. Skipping table creation.")
+            logger.warning("Please check database connection and restart the service.")
 
 
 @app.on_event("shutdown")
@@ -64,8 +82,25 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint with database status."""
+    from app.core.database import engine
+    from sqlalchemy import text
+    
+    status = {"status": "healthy", "database": "unknown"}
+    
+    if engine:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            status["database"] = "connected"
+        except Exception as e:
+            status["database"] = f"error: {str(e)}"
+            status["status"] = "degraded"
+    else:
+        status["database"] = "not_available"
+        status["status"] = "degraded"
+    
+    return status
 
 
 # Placeholder for future routers

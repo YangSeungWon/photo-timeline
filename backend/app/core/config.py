@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/phototimeline"
-    AUTO_CREATE_TABLES: bool = False
+    AUTO_CREATE_TABLES: bool = True
 
     # JWT Authentication
     SECRET_KEY: str = "your-secret-key-change-in-production"
@@ -40,6 +40,18 @@ class Settings(BaseSettings):
 
     # Development settings
     debug: bool = False
+
+    # Frontend URL for email links
+    FRONTEND_URL: str = "http://localhost:3067"
+
+    # Email settings
+    MAIL_HOST: str = "smtp.gmail.com"
+    MAIL_PORT: int = 587
+    MAIL_USER: str = ""
+    MAIL_PASSWORD: str = ""
+    MAIL_SECURE: bool = True  # Use TLS
+    MAIL_FROM: str = ""
+    MAIL_FROM_NAME: str = "Photo Timeline"
 
     class Config:
         env_file = ".env"
