@@ -11,23 +11,42 @@ from sqlmodel import Session, select
 from ..models.user import User
 
 
-# Email configuration
-email_config = ConnectionConfig(
-    MAIL_USERNAME=settings.MAIL_USER,
-    MAIL_PASSWORD=settings.MAIL_PASSWORD,
-    MAIL_FROM=settings.MAIL_FROM or settings.MAIL_USER,
-    MAIL_PORT=settings.MAIL_PORT,
-    MAIL_SERVER=settings.MAIL_HOST,
-    MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
-    MAIL_STARTTLS=settings.MAIL_SECURE,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True,
-)
-
-fastmail = FastMail(email_config)
-
 logger = logging.getLogger(__name__)
+
+
+def validate_email_config():
+    """Validate email configuration before initializing FastMail."""
+    if not settings.MAIL_USER:
+        logger.warning("MAIL_USER not configured - email functionality will be disabled")
+        return False
+    if not settings.MAIL_PASSWORD:
+        logger.warning("MAIL_PASSWORD not configured - email functionality will be disabled")
+        return False
+    if not settings.MAIL_FROM:
+        logger.warning("MAIL_FROM not configured - using MAIL_USER as default")
+    return True
+
+
+# Check email configuration
+email_enabled = validate_email_config()
+
+# Email configuration
+if email_enabled:
+    email_config = ConnectionConfig(
+        MAIL_USERNAME=settings.MAIL_USER,
+        MAIL_PASSWORD=settings.MAIL_PASSWORD,
+        MAIL_FROM=settings.MAIL_FROM or settings.MAIL_USER,
+        MAIL_PORT=settings.MAIL_PORT,
+        MAIL_SERVER=settings.MAIL_HOST,
+        MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
+        MAIL_STARTTLS=True,  # Always use STARTTLS for Gmail
+        MAIL_SSL_TLS=False,  # Don't use SSL/TLS directly (use STARTTLS instead)
+        USE_CREDENTIALS=True,
+        VALIDATE_CERTS=True,
+    )
+    fastmail = FastMail(email_config)
+else:
+    fastmail = None
 
 
 # Email templates
@@ -102,6 +121,13 @@ def get_verification_email_template(display_name: str, verification_token: str) 
 
 async def send_verification_email(user_email: str, display_name: str, verification_token: str):
     """Send email verification email to user."""
+    if not email_enabled or not fastmail:
+        logger.error("Email functionality is disabled - cannot send verification email")
+        raise HTTPException(
+            status_code=500,
+            detail="Email service is not configured. Please contact administrator."
+        )
+    
     try:
         html_template = get_verification_email_template(display_name, verification_token)
         
@@ -116,7 +142,11 @@ async def send_verification_email(user_email: str, display_name: str, verificati
         logger.info(f"Verification email sent successfully to {user_email}")
         
     except Exception as e:
-        logger.error(f"Failed to send verification email: {e}")
+        logger.error(f"Failed to send verification email to {user_email}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send verification email: {str(e)}"
+        )
 
 
 def store_verification_token(user_id: str, token: str, db: Session) -> None:

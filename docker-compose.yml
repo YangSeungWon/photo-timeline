@@ -14,6 +14,15 @@ services:
       - DATABASE_URL=postgresql://user:password@postgres/phototimeline
       - REDIS_URL=redis://redis:6379
       - AUTO_CREATE_TABLES=true
+      # Email configuration
+      - MAIL_HOST=smtp.gmail.com
+      - MAIL_PORT=587
+      - MAIL_USER=${MAIL_USER:-}
+      - MAIL_PASSWORD=${MAIL_PASSWORD:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=Photo Timeline
+      - MAIL_SECURE=true
+      - FRONTEND_URL=http://localhost:3067
     depends_on:
       postgres:
         condition: service_healthy

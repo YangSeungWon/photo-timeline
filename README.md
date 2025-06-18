@@ -240,9 +240,9 @@ make prod
 **Backend (.env):**
 
 ```env
-DATABASE_URL=postgresql://user:pass@localhost/photo_timeline
-REDIS_URL=redis://localhost:6379/0
-SECRET_KEY=your-secret-key
+DATABASE_URL=postgresql://user:password@localhost:5432/phototimeline
+REDIS_URL=redis://localhost:6379
+SECRET_KEY=your-secret-key-change-in-production
 UPLOAD_DIR=/app/uploads
 ```
 
@@ -252,6 +252,25 @@ UPLOAD_DIR=/app/uploads
 NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 NEXT_PUBLIC_APP_NAME=Photo Timeline
 ```
+
+**Email Configuration:**
+
+Create a `.env` file in the root directory with the following variables:
+
+```bash
+# For Gmail:
+# 1. Enable 2-factor authentication on your Google account
+# 2. Generate an App Password: https://support.google.com/accounts/answer/185833
+# 3. Use your Gmail address and the generated App Password
+MAIL_USER=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_FROM=your-email@gmail.com
+
+# Frontend URL (for email verification links)
+FRONTEND_URL=http://localhost:3067
+```
+
+**Important**: Without proper email configuration, user registration will fail since email verification is required.
 
 ## 📋 Roadmap
 

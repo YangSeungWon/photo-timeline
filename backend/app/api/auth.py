@@ -60,9 +60,15 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
             display_name=user.display_name,
             verification_token=verification_token
         )
+    except HTTPException:
+        # If email service is not configured, rollback user creation
+        db.delete(user)
+        db.commit()
+        raise
     except Exception as e:
-        # If email fails, still create user but log the error
+        # For other errors, keep user but log the error
         print(f"Failed to send verification email to {user.email}: {e}")
+        # Could optionally set a flag indicating email send failed
 
     return user
 
