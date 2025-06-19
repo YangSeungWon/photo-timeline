@@ -88,11 +88,9 @@ def process_photo(photo_id: str, file_path: str) -> bool:
             if not success:
                 logger.warning(f"EXIF extraction failed for {photo_id}")
 
-            # Step 2: Trigger meeting clustering
-            if photo.meeting_id:
-                meeting = session.get(Meeting, photo.meeting_id)
-                if meeting:
-                    _cluster_group_photos(session, meeting.group_id)
+            # Step 2: Trigger meeting clustering for the group
+            # This will assign the photo to a meeting based on its timestamp
+            _cluster_group_photos(session, str(photo.group_id))
 
             # Step 3: Generate thumbnail
             _generate_thumbnail(session, photo, file_path)
@@ -121,19 +119,16 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
         photo.exif_data = serialized_metadata
 
         # Set taken_at from EXIF datetime
-        if "datetime" in metadata:
-            photo.shot_at = metadata["datetime"]
+        if "DateTimeOriginal" in metadata:
+            photo.shot_at = metadata["DateTimeOriginal"]
 
         # Set GPS location if available
-        if "gps_point" in metadata and metadata["gps_point"]:
-            # metadata['gps_point'] should be a Point object or tuple from photo_core
-            gps_point = metadata["gps_point"]
-            if hasattr(gps_point, "x") and hasattr(gps_point, "y"):
-                # Convert to PostGIS format
-                photo.point_gps = f"POINT({gps_point.x} {gps_point.y})"
-            elif isinstance(gps_point, (tuple, list)) and len(gps_point) >= 2:
-                # Handle tuple/list format (longitude, latitude)
-                photo.point_gps = f"POINT({gps_point[0]} {gps_point[1]})"
+        if "GPSLat" in metadata and "GPSLong" in metadata:
+            lat = metadata["GPSLat"]
+            lon = metadata["GPSLong"]
+            if lat is not None and lon is not None:
+                # Convert to PostGIS format (longitude first, then latitude)
+                photo.point_gps = f"POINT({lon} {lat})"
 
         session.add(photo)
         logger.info(f"Extracted EXIF data for photo {photo.id}")
@@ -147,11 +142,10 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
 def _cluster_group_photos(session: Session, group_id: str) -> bool:
     """Trigger photo clustering for the entire group."""
     try:
-        # Get all photos in the group that have taken_at timestamps
+        # Get all photos in the group that have shot_at timestamps
         stmt = (
             select(Photo)
-            .join(Meeting)
-            .where(Meeting.group_id == group_id)
+            .where(Photo.group_id == group_id)
             .where(Photo.shot_at.is_not(None))
         )
         photos = session.exec(stmt).all()
@@ -160,8 +154,72 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
             logger.info(f"Not enough photos for clustering in group {group_id}")
             return True
 
+        # Convert photos to dictionary format expected by photo_core
+        photo_dicts = []
+        for photo in photos:
+            photo_dict = {
+                "id": str(photo.id),
+                "DateTimeOriginal": photo.shot_at,
+                "group_id": str(photo.group_id),
+            }
+            photo_dicts.append(photo_dict)
+
         # Use photo_core clustering
-        cluster_photos_into_meetings(session, group_id)
+        clustered_photos = cluster_photos_into_meetings(photo_dicts)
+        
+        # Group clustered photos by meeting_id to create meetings
+        meetings_data = {}
+        for clustered_photo in clustered_photos:
+            meeting_id = clustered_photo.get("meeting_id")
+            if meeting_id:
+                if meeting_id not in meetings_data:
+                    meetings_data[meeting_id] = {
+                        "photos": [],
+                        "start_time": clustered_photo["DateTimeOriginal"],
+                        "end_time": clustered_photo["DateTimeOriginal"],
+                        "meeting_date": clustered_photo["meeting_date"]
+                    }
+                
+                meetings_data[meeting_id]["photos"].append(clustered_photo)
+                # Update time range
+                photo_time = clustered_photo["DateTimeOriginal"]
+                if photo_time < meetings_data[meeting_id]["start_time"]:
+                    meetings_data[meeting_id]["start_time"] = photo_time
+                if photo_time > meetings_data[meeting_id]["end_time"]:
+                    meetings_data[meeting_id]["end_time"] = photo_time
+
+        # Create or update meetings
+        for meeting_id, meeting_data in meetings_data.items():
+            meeting = session.get(Meeting, meeting_id)
+            if not meeting:
+                meeting = Meeting(
+                    id=meeting_id,
+                    group_id=group_id,
+                    title=f"Meeting {meeting_data['meeting_date']}",
+                    start_time=meeting_data["start_time"],
+                    end_time=meeting_data["end_time"],
+                    meeting_date=meeting_data["meeting_date"],
+                    photo_count=len(meeting_data["photos"])
+                )
+                session.add(meeting)
+            else:
+                # Update existing meeting
+                meeting.start_time = meeting_data["start_time"]
+                meeting.end_time = meeting_data["end_time"]
+                meeting.photo_count = len(meeting_data["photos"])
+                session.add(meeting)
+
+        # Update photos with meeting assignments
+        for clustered_photo in clustered_photos:
+            photo_id = clustered_photo["id"]
+            meeting_id = clustered_photo.get("meeting_id")
+            
+            photo = session.get(Photo, photo_id)
+            if photo:
+                photo.meeting_id = meeting_id
+                session.add(photo)
+
+        session.commit()
         logger.info(f"Clustered photos for group {group_id}")
         return True
 

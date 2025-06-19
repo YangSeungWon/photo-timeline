@@ -1,5 +1,6 @@
 import os
 import secrets
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -12,7 +13,7 @@ class Settings(BaseSettings):
     AUTO_CREATE_TABLES: bool = True
 
     # JWT Authentication - 보안상 중요한 설정
-    SECRET_KEY: str = secrets.token_urlsafe(32)  # 자동 생성되는 시크릿 키
+    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
