@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from ..core.email import (
     store_verification_token,
     verify_email_token,
 )
+from ..core.config import settings
 from ..core.deps import get_current_active_user
 from ..models.user import User
 from ..schemas.auth import UserRegister, UserLogin, Token, RefreshTokenRequest
@@ -74,21 +76,22 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     return user
 
 
-@router.post("/verify-email")
+@router.get("/verify-email")
 async def verify_email(token: str, db: Session = Depends(get_db)):
     """Verify user email with token."""
     user = verify_email_token(token, db)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired verification token"
+        # Redirect to frontend with error message
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/verify-email?success=false&message=Invalid+or+expired+verification+token",
+            status_code=302
         )
     
-    return {
-        "message": "Email verified successfully",
-        "user_id": str(user.id),
-        "email": user.email
-    }
+    # Redirect to frontend with success message
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}/verify-email?success=true&message=Email+verified+successfully&email={user.email}",
+        status_code=302
+    )
 
 
 @router.post("/resend-verification")

@@ -11,38 +11,41 @@ function VerifyEmailContent() {
 	const [email, setEmail] = useState('')
 	const searchParams = useSearchParams()
 	const router = useRouter()
+
+	const success = searchParams.get('success')
+	const messageParam = searchParams.get('message')
+	const emailParam = searchParams.get('email')
 	const token = searchParams.get('token')
 
 	useEffect(() => {
+		// If we have success/failure parameters from backend redirect
+		if (success !== null) {
+			if (success === 'true') {
+				setStatus('success')
+				setMessage(messageParam || 'Email verified successfully')
+				setEmail(emailParam || '')
+
+				// Redirect to login after 3 seconds
+				setTimeout(() => {
+					router.push('/login?message=Email verified! You can now sign in.')
+				}, 3000)
+			} else {
+				setStatus('error')
+				setMessage(messageParam || 'Verification failed')
+			}
+			return
+		}
+
+		// Legacy handling for direct token access (fallback)
 		if (!token) {
 			setStatus('error')
 			setMessage('No verification token provided')
 			return
 		}
 
-		const verifyEmail = async () => {
-			try {
-				const response = await api.post('/auth/verify-email', null, {
-					params: { token }
-				})
-
-				setStatus('success')
-				setMessage(response.data.message)
-				setEmail(response.data.email)
-
-				// Redirect to login after 3 seconds
-				setTimeout(() => {
-					router.push('/login?message=Email verified! You can now sign in.')
-				}, 3000)
-			} catch (err) {
-				const apiError = handleApiError(err)
-				setStatus('error')
-				setMessage(apiError.detail)
-			}
-		}
-
-		verifyEmail()
-	}, [token, router])
+		// If user accessed the page directly with token, redirect to backend
+		window.location.href = `/api/v1/auth/verify-email?token=${token}`
+	}, [success, messageParam, emailParam, token, router])
 
 	if (status === 'loading') {
 		return (
