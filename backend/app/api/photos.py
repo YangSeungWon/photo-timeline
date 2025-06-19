@@ -194,7 +194,7 @@ async def list_photos(
         query = query.where(Photo.meeting_id == meeting_id)
 
     photos = db.exec(query.offset(offset).limit(limit)).all()
-    return photos
+    return [PhotoResponse.from_photo_model(photo) for photo in photos]
 
 
 @router.get("/{photo_id}", response_model=PhotoResponse)
@@ -212,7 +212,7 @@ async def get_photo(
 
     # TODO: Add proper authorization check based on group membership
 
-    return photo
+    return PhotoResponse.from_photo_model(photo)
 
 
 @router.get("/{photo_id}/thumb")
