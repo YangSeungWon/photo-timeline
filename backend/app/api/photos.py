@@ -215,6 +215,36 @@ async def get_photo(
     return PhotoResponse.from_photo_model(photo)
 
 
+@router.get("/{photo_id}/full")
+async def get_photo_full(
+    photo_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get the full-size original photo."""
+    photo = db.exec(select(Photo).where(Photo.id == photo_id)).first()
+    if not photo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found"
+        )
+
+    # TODO: Add proper authorization check based on group membership
+    
+    # Construct original file path
+    orig_path = Path("/srv/photo-timeline/storage") / str(photo.group_id) / photo.filename_orig
+    
+    if not orig_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Original photo file not found"
+        )
+
+    return FileResponse(
+        path=str(orig_path),
+        media_type=photo.mime_type or "image/jpeg",
+        filename=photo.filename_orig
+    )
+
+
 @router.get("/{photo_id}/thumb")
 async def get_photo_thumbnail(
     photo_id: UUID,
