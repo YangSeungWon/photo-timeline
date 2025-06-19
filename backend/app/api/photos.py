@@ -19,76 +19,9 @@ from ..models.meeting import Meeting
 from ..schemas.photo import PhotoResponse, PhotoUploadResponse
 from ..worker_tasks import process_photo
 
-# Add this import for EXIF processing
-from PIL import Image
-from PIL.ExifTags import TAGS
-
-def extract_photo_datetime(file_path: Path) -> Optional[datetime]:
-    """Extract datetime from photo EXIF data."""
-    try:
-        with Image.open(file_path) as image:
-            exif_data = image._getexif()
-            if exif_data:
-                for tag, value in exif_data.items():
-                    tag_name = TAGS.get(tag, tag)
-                    if tag_name == "DateTimeOriginal" or tag_name == "DateTime":
-                        try:
-                            return datetime.strptime(value, "%Y:%m:%d %H:%M:%S")
-                        except ValueError:
-                            continue
-    except Exception as e:
-        logger.warning(f"Failed to extract EXIF datetime from {file_path}: {e}")
-    return None
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def find_closest_meeting(
-    db: Session, group_id: UUID, shot_at: Optional[datetime]
-) -> Optional[Meeting]:
-    """Find the closest existing meeting based on the photo's shot date."""
-    if not shot_at:
-        return None
-    
-    # Get all meetings for the group, excluding "Default Meeting"
-    meetings = db.exec(
-        select(Meeting).where(
-            Meeting.group_id == group_id,
-            Meeting.title != "Default Meeting"
-        )
-    ).all()
-    
-    if not meetings:
-        return None
-    
-    # First, try to find a meeting where the photo was taken during the meeting
-    for meeting in meetings:
-        if meeting.start_time <= shot_at <= meeting.end_time:
-            logger.info(f"Photo taken during meeting period: {meeting.title}")
-            return meeting
-    
-    # If no exact match, find the meeting with the closest start time
-    closest_meeting = None
-    min_time_diff = None
-    
-    for meeting in meetings:
-        # Calculate time difference between shot date and meeting start time
-        time_diff = abs((shot_at - meeting.start_time).total_seconds())
-        
-        if min_time_diff is None or time_diff < min_time_diff:
-            min_time_diff = time_diff
-            closest_meeting = meeting
-    
-    # Only assign to meeting if the photo was taken within 48 hours of the meeting
-    # This prevents very old photos from being assigned to unrelated meetings
-    if min_time_diff and min_time_diff <= 48 * 3600:  # 48 hours in seconds
-        logger.info(f"Photo assigned to closest meeting within 48h: {closest_meeting.title} (diff: {min_time_diff/3600:.1f}h)")
-        return closest_meeting
-    
-    logger.info(f"No suitable meeting found (closest diff: {min_time_diff/3600 if min_time_diff else 'N/A'}h)")
-    return None
 
 
 @router.post("/upload", response_model=PhotoUploadResponse)
@@ -125,64 +58,47 @@ async def upload_photo(
     filename, file_path = await save_upload_file(file, str(group_id))
     file_abs_path = Path(file_path).resolve()
 
-    # Extract EXIF data to get shot date
-    shot_at = extract_photo_datetime(file_abs_path)
-    if shot_at:
-        logger.info(f"Extracted shot date from EXIF: {shot_at}")
-    else:
-        logger.info(f"No shot date found in EXIF for {filename}")
+    # Create or get default meeting for the group
+    default_meeting = db.exec(
+        select(Meeting).where(
+            Meeting.group_id == group_id, Meeting.title == "Default Meeting"
+        )
+    ).first()
 
-    # Find the closest meeting based on shot date
-    target_meeting = None
-    if shot_at:
-        target_meeting = find_closest_meeting(db, group_id, shot_at)
-        if target_meeting:
-            logger.info(f"Assigned photo to existing meeting: {target_meeting.title}")
+    if not default_meeting:
+        now = datetime.utcnow()
+        default_meeting = Meeting(
+            group_id=group_id,
+            title="Default Meeting",
+            description="Auto-created meeting for uploaded photos",
+            start_time=now,
+            end_time=now,
+            meeting_date=now.date(),
+            photo_count=0,
+            participant_count=0,
+        )
+        db.add(default_meeting)
+        db.commit()
+        db.refresh(default_meeting)
 
-    # If no suitable meeting found, create or get default meeting
-    if not target_meeting:
-        target_meeting = db.exec(
-            select(Meeting).where(
-                Meeting.group_id == group_id, Meeting.title == "Default Meeting"
-            )
-        ).first()
-
-        if not target_meeting:
-            now = datetime.utcnow()
-            target_meeting = Meeting(
-                group_id=group_id,
-                title="Default Meeting",
-                description="Auto-created meeting for uploaded photos",
-                start_time=now,
-                end_time=now,
-                meeting_date=now.date(),
-                photo_count=0,
-                participant_count=0,
-            )
-            db.add(target_meeting)
-            db.commit()
-            db.refresh(target_meeting)
-        
-        logger.info("Assigned photo to default meeting")
-
-    # Create photo record
+    # Create photo record - ALWAYS assign to Default Meeting initially
+    # Worker will move it to appropriate meeting later
     photo = Photo(
         group_id=group_id,
         uploader_id=current_user.id,
-        meeting_id=target_meeting.id,
+        meeting_id=default_meeting.id,
         filename_orig=filename,
         file_size=file.size or 0,
         file_hash="",  # Will be calculated by worker
         mime_type=file.content_type or "application/octet-stream",
         is_processed=False,
-        shot_at=shot_at,  # Store the extracted shot date
     )
 
     db.add(photo)
     
-    # Update meeting photo count
-    target_meeting.photo_count += 1
-    target_meeting.updated_at = datetime.utcnow()
+    # Update default meeting photo count
+    default_meeting.photo_count += 1
+    default_meeting.updated_at = datetime.utcnow()
     
     db.commit()
     db.refresh(photo)

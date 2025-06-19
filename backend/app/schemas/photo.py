@@ -117,32 +117,49 @@ class PhotoResponse(BaseModel):
             try:
                 # Use geoalchemy2.shape.to_shape() for clean WKBElement → shapely Point conversion
                 from geoalchemy2.shape import to_shape
+                import json
                 
                 point = to_shape(photo.point_gps)  # shapely.geometry.Point
                 data['gps_latitude'] = float(point.y)   # lat
                 data['gps_longitude'] = float(point.x)  # lng
-                data['point_gps'] = f"POINT({point.x} {point.y})"  # WKT for frontend
+                
+                # Create GeoJSON format for frontend (not WKT)
+                geojson = {
+                    "type": "Point",
+                    "coordinates": [point.x, point.y]  # [lng, lat] order in GeoJSON
+                }
+                data['point_gps'] = json.dumps(geojson)  # JSON string for frontend
                 
             except Exception as e:
                 logger.warning(f"Failed to parse GPS coordinates using to_shape for photo {photo.id}: {e}")
                 # Fallback to string conversion
                 try:
                     point_str = str(photo.point_gps)
-                    data['point_gps'] = point_str
                     
                     if point_str and point_str.startswith('POINT('):
                         # Parse WKT format: "POINT(longitude latitude)"
                         coords_str = point_str.replace('POINT(', '').replace(')', '')
                         coords = coords_str.split()
                         if len(coords) >= 2:
-                            data['gps_longitude'] = float(coords[0])
-                            data['gps_latitude'] = float(coords[1])
+                            lng = float(coords[0])
+                            lat = float(coords[1])
+                            data['gps_longitude'] = lng
+                            data['gps_latitude'] = lat
+                            
+                            # Create GeoJSON fallback
+                            geojson = {
+                                "type": "Point", 
+                                "coordinates": [lng, lat]
+                            }
+                            data['point_gps'] = json.dumps(geojson)
                         else:
                             data['gps_latitude'] = None
                             data['gps_longitude'] = None
+                            data['point_gps'] = None
                     else:
                         data['gps_latitude'] = None
                         data['gps_longitude'] = None
+                        data['point_gps'] = None
                 except Exception as e2:
                     logger.error(f"Complete GPS parsing failure for photo {photo.id}: {e2}")
                     data['point_gps'] = None

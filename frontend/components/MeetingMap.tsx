@@ -35,40 +35,28 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
             try {
                 let lat: number, lng: number;
 
-                // First, try to use the separated latitude/longitude values
+                // First, try to use the separated latitude/longitude values (most reliable)
                 if (photo.gps_latitude && photo.gps_longitude) {
                     lat = photo.gps_latitude;
                     lng = photo.gps_longitude;
                 }
-                // Fallback to parsing point_gps
+                // Fallback to parsing point_gps GeoJSON
                 else if (photo.point_gps) {
-                    // Check if it's a WKT POINT format: "POINT(longitude latitude)"
-                    if (typeof photo.point_gps === 'string' && photo.point_gps.startsWith('POINT(')) {
-                        const match = photo.point_gps.match(/POINT\(([^\s]+)\s+([^\s]+)\)/);
-                        if (match) {
-                            lng = parseFloat(match[1]);
-                            lat = parseFloat(match[2]);
-                        } else {
-                            console.warn('Invalid WKT POINT format:', photo.point_gps);
-                            return;
-                        }
-                    } else if (typeof photo.point_gps === 'string') {
-                        // Try parsing as GeoJSON
+                    if (typeof photo.point_gps === 'string') {
+                        // Parse GeoJSON string from backend
                         const geoJson = JSON.parse(photo.point_gps);
-                        if (geoJson.type === 'Point' && geoJson.coordinates) {
-                            [lng, lat] = geoJson.coordinates;
+                        if (geoJson.type === 'Point' && geoJson.coordinates && geoJson.coordinates.length >= 2) {
+                            [lng, lat] = geoJson.coordinates;  // GeoJSON format: [lng, lat]
                         } else {
-                            console.warn('Unknown GPS format:', photo.point_gps);
+                            console.warn('Invalid GeoJSON format:', photo.point_gps);
                             return;
                         }
+                    } else if (photo.point_gps.type === 'Point' && photo.point_gps.coordinates) {
+                        // Already parsed GeoJSON object
+                        [lng, lat] = photo.point_gps.coordinates;
                     } else {
-                        // Assume it's already a parsed object
-                        if (photo.point_gps.type === 'Point' && photo.point_gps.coordinates) {
-                            [lng, lat] = photo.point_gps.coordinates;
-                        } else {
-                            console.warn('Unknown GPS object format:', photo.point_gps);
-                            return;
-                        }
+                        console.warn('Unknown GPS format:', photo.point_gps);
+                        return;
                     }
                 } else {
                     return; // No GPS data available

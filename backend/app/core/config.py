@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     # Development settings
     DEBUG: bool = False
 
+    # Photo clustering settings
+    MEETING_GAP_HOURS: int = 4  # Time gap in hours for meeting clustering
+
     # Frontend URL for email links
     FRONTEND_URL: str = "http://localhost:3067"
 
