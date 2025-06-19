@@ -97,6 +97,10 @@ def process_photo(photo_id: str, file_path: str) -> bool:
             # Step 3: Generate thumbnail
             _generate_thumbnail(session, photo, file_path)
 
+            # Mark photo as processed
+            photo.is_processed = True
+            session.add(photo)
+
             # Final commit
             session.commit()
             logger.info(f"Successfully processed photo {photo_id}")
