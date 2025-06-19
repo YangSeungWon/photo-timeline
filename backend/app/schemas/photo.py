@@ -115,28 +115,50 @@ class PhotoResponse(BaseModel):
         # Handle PostGIS point_gps field for GPS coordinates
         if hasattr(photo, 'point_gps') and photo.point_gps:
             try:
-                # Convert PostGIS point to lat/lon and store WKT string
-                point_str = str(photo.point_gps)
-                data['point_gps'] = point_str  # Store WKT string for frontend
+                from sqlalchemy import text
+                from ..core.database import engine
                 
-                if point_str and point_str.startswith('POINT('):
-                    # Parse WKT format: "POINT(longitude latitude)"
-                    coords_str = point_str.replace('POINT(', '').replace(')', '')
-                    coords = coords_str.split()
-                    if len(coords) >= 2:
-                        data['gps_longitude'] = float(coords[0])
-                        data['gps_latitude'] = float(coords[1])
+                # Use PostGIS ST_AsText to convert binary to WKT
+                with engine.connect() as conn:
+                    result = conn.execute(
+                        text("SELECT ST_AsText(:point_wkb) as wkt, ST_X(:point_wkb) as lng, ST_Y(:point_wkb) as lat"),
+                        {"point_wkb": photo.point_gps}
+                    ).fetchone()
+                    
+                    if result:
+                        data['point_gps'] = result.wkt  # Store WKT string for frontend
+                        data['gps_longitude'] = float(result.lng)
+                        data['gps_latitude'] = float(result.lat)
+                    else:
+                        data['point_gps'] = None
+                        data['gps_latitude'] = None
+                        data['gps_longitude'] = None
+                        
+            except Exception as e:
+                logger.warning(f"Failed to parse GPS coordinates for photo {photo.id}: {e}")
+                # Fallback to string conversion
+                try:
+                    point_str = str(photo.point_gps)
+                    data['point_gps'] = point_str
+                    
+                    if point_str and point_str.startswith('POINT('):
+                        # Parse WKT format: "POINT(longitude latitude)"
+                        coords_str = point_str.replace('POINT(', '').replace(')', '')
+                        coords = coords_str.split()
+                        if len(coords) >= 2:
+                            data['gps_longitude'] = float(coords[0])
+                            data['gps_latitude'] = float(coords[1])
+                        else:
+                            data['gps_latitude'] = None
+                            data['gps_longitude'] = None
                     else:
                         data['gps_latitude'] = None
                         data['gps_longitude'] = None
-                else:
+                except Exception as e2:
+                    logger.error(f"Complete GPS parsing failure for photo {photo.id}: {e2}")
+                    data['point_gps'] = None
                     data['gps_latitude'] = None
                     data['gps_longitude'] = None
-            except Exception as e:
-                logger.warning(f"Failed to parse GPS coordinates for photo {photo.id}: {e}")
-                data['point_gps'] = None
-                data['gps_latitude'] = None
-                data['gps_longitude'] = None
         else:
             data['point_gps'] = None
             data['gps_latitude'] = None
