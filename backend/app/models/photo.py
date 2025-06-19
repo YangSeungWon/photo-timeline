@@ -2,6 +2,7 @@ from sqlmodel import SQLModel, Field, Column
 from sqlalchemy import Text, JSON
 from geoalchemy2 import Geometry
 from geoalchemy2.elements import WKTElement
+from geoalchemy2.shape import to_shape
 from uuid import UUID, uuid4
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -75,3 +76,26 @@ class Photo(SQLModel, table=True):
     is_public: bool = Field(default=True)
     is_flagged: bool = Field(default=False)
     flagged_reason: Optional[str] = Field(default=None, max_length=200)
+
+    # Convenience properties for GPS coordinates
+    @property
+    def lat(self) -> Optional[float]:
+        """Get latitude from GPS point."""
+        if self.point_gps:
+            try:
+                point = to_shape(self.point_gps)
+                return float(point.y)
+            except:
+                return None
+        return None
+
+    @property
+    def lng(self) -> Optional[float]:
+        """Get longitude from GPS point."""
+        if self.point_gps:
+            try:
+                point = to_shape(self.point_gps)
+                return float(point.x)
+            except:
+                return None
+        return None

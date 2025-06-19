@@ -115,27 +115,16 @@ class PhotoResponse(BaseModel):
         # Handle PostGIS point_gps field for GPS coordinates
         if hasattr(photo, 'point_gps') and photo.point_gps:
             try:
-                from sqlalchemy import text
-                from ..core.database import engine
+                # Use geoalchemy2.shape.to_shape() for clean WKBElement → shapely Point conversion
+                from geoalchemy2.shape import to_shape
                 
-                # Use PostGIS ST_AsText to convert binary to WKT
-                with engine.connect() as conn:
-                    result = conn.execute(
-                        text("SELECT ST_AsText(:point_wkb) as wkt, ST_X(:point_wkb) as lng, ST_Y(:point_wkb) as lat"),
-                        {"point_wkb": photo.point_gps}
-                    ).fetchone()
-                    
-                    if result:
-                        data['point_gps'] = result.wkt  # Store WKT string for frontend
-                        data['gps_longitude'] = float(result.lng)
-                        data['gps_latitude'] = float(result.lat)
-                    else:
-                        data['point_gps'] = None
-                        data['gps_latitude'] = None
-                        data['gps_longitude'] = None
-                        
+                point = to_shape(photo.point_gps)  # shapely.geometry.Point
+                data['gps_latitude'] = float(point.y)   # lat
+                data['gps_longitude'] = float(point.x)  # lng
+                data['point_gps'] = f"POINT({point.x} {point.y})"  # WKT for frontend
+                
             except Exception as e:
-                logger.warning(f"Failed to parse GPS coordinates for photo {photo.id}: {e}")
+                logger.warning(f"Failed to parse GPS coordinates using to_shape for photo {photo.id}: {e}")
                 # Fallback to string conversion
                 try:
                     point_str = str(photo.point_gps)
