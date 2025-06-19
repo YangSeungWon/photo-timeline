@@ -142,6 +142,8 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
 def _cluster_group_photos(session: Session, group_id: str) -> bool:
     """Trigger photo clustering for the entire group."""
     try:
+        # Create a savepoint for clustering operations
+        savepoint = session.begin_nested()
         # Get all photos in the group that have shot_at timestamps
         stmt = (
             select(Photo)
@@ -175,8 +177,44 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
         ).all()
         existing_meetings_by_date = {m.meeting_date: m for m in existing_meetings}
         
-        # Clean approach: Delete existing auto-generated meetings first
+        # Clean approach: Move photos to Default Meeting first, then delete auto-generated meetings
         # (Keep only Default Meeting and manually created meetings)
+        
+        # Get or create Default Meeting
+        default_meeting = session.exec(
+            select(Meeting).where(
+                Meeting.group_id == group_id, 
+                Meeting.title == "Default Meeting"
+            )
+        ).first()
+        
+        if not default_meeting:
+            from datetime import datetime
+            now = datetime.utcnow()
+            default_meeting = Meeting(
+                group_id=group_id,
+                title="Default Meeting",
+                description="Auto-created meeting for uploaded photos",
+                start_time=now,
+                end_time=now,
+                meeting_date=now.date(),
+                photo_count=0,
+                participant_count=0,
+            )
+            session.add(default_meeting)
+            session.flush()
+        
+        # Move all photos to Default Meeting first (to avoid FK constraint violations)
+        photos_in_group = session.exec(
+            select(Photo).where(Photo.group_id == group_id)
+        ).all()
+        
+        for photo in photos_in_group:
+            photo.meeting_id = default_meeting.id
+            session.add(photo)
+        session.flush()
+        
+        # Now safely delete auto-generated meetings
         auto_meetings = session.exec(
             select(Meeting)
             .where(Meeting.group_id == group_id)
@@ -229,12 +267,19 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
                     photo.meeting_id = meeting.id
                     session.add(photo)
 
+        # Commit the savepoint and then the main transaction
+        savepoint.commit()
         session.commit()
         logger.info(f"Clustered {len(photos)} photos into {len(meetings_data)} meetings for group {group_id}")
         return True
 
     except Exception as e:
         logger.error(f"Photo clustering failed for group {group_id}: {e}")
+        # Rollback to savepoint to avoid session corruption
+        try:
+            savepoint.rollback()
+        except:
+            session.rollback()
         return False
 
 
