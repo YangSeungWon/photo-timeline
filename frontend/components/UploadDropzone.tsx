@@ -164,8 +164,8 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
                 {uploadingFiles.length === 0 ? (
                     <div
                         className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${isDragOver
-                            ? 'border-blue-400 bg-blue-50'
-                            : 'border-gray-300 hover:border-gray-400'
+                                ? 'border-blue-400 bg-blue-50'
+                                : 'border-gray-300 hover:border-gray-400'
                             }`}
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -230,10 +230,10 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
                                         <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
                                             <div
                                                 className={`h-2 rounded-full transition-all duration-300 ${file.status === 'error'
-                                                    ? 'bg-red-500'
-                                                    : file.status === 'completed'
-                                                        ? 'bg-green-500'
-                                                        : 'bg-blue-500'
+                                                        ? 'bg-red-500'
+                                                        : file.status === 'completed'
+                                                            ? 'bg-green-500'
+                                                            : 'bg-blue-500'
                                                     }`}
                                                 style={{ width: `${file.progress}%` }}
                                             />

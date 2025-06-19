@@ -80,14 +80,14 @@ const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                 <ModalBody>
                     <div className="space-y-4">
                         <Input
-                            {...getFieldProps('name')}
+                            {...{ ...getFieldProps('name'), value: String(getFieldProps('name').value) }}
                             label="Group Name"
                             placeholder="Enter group name"
                             required
                         />
 
                         <Textarea
-                            {...getFieldProps('description')}
+                            {...{ ...getFieldProps('description'), value: String(getFieldProps('description').value) }}
                             label="Description"
                             placeholder="Describe your group (optional)"
                             rows={3}

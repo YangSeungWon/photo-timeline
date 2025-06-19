@@ -165,7 +165,7 @@ async def list_photos(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You are not a member of this group",
             )
-        
+
         query = query.where(Photo.group_id == group_id)
     
     if meeting_id:

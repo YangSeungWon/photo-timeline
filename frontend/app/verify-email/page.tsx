@@ -3,7 +3,6 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { api, handleApiError } from '@/lib/api'
 
 function VerifyEmailContent() {
 	const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')

@@ -13,12 +13,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:password@postgres/phototimeline
       - REDIS_URL=redis://redis:6379
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
       - AUTO_CREATE_TABLES=true
-      # JWT Security
-      - SECRET_KEY=${SECRET_KEY:-}
       # Email configuration
       - MAIL_HOST=smtp.gmail.com
       - MAIL_PORT=587
@@ -28,8 +23,6 @@ services:
       - MAIL_FROM_NAME=Photo Timeline
       - MAIL_SECURE=true
       - FRONTEND_URL=https://timeline.ysw.kr
-      # Development settings
-      - DEBUG=${DEBUG:-false}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,7 +64,6 @@ services:
       - DATABASE_URL=postgresql://user:password@postgres/phototimeline
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_DB=0
     depends_on:
       postgres:
         condition: service_healthy
