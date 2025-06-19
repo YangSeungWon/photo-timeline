@@ -1,13 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import useSWR from 'swr'
-import { PlusIcon, UsersIcon, PhotoIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '@/contexts/AuthContext'
 import { authenticatedFetcher } from '@/lib/swr-fetcher'
-import { Group, endpoints } from '@/lib/api'
-import CreateGroupModal from '@/components/CreateGroupModal'
+import { endpoints } from '@/lib/api'
+import { Button, LoadingSpinner } from '@/components/ui'
+import { GroupCard, CreateGroupModal } from '@/components/groups'
+import type { Group } from '@/types'
 
 export default function GroupsPage() {
     const [showCreateModal, setShowCreateModal] = useState(false)
@@ -50,12 +51,12 @@ export default function GroupsPage() {
                             <h1 className="text-3xl font-bold text-gray-900">Photo Timeline</h1>
                             <p className="mt-1 text-sm text-gray-500">Welcome back, {user.display_name}</p>
                         </div>
-                        <button
+                        <Button
+                            variant="outline"
                             onClick={logout}
-                            className="btn-outline"
                         >
                             Sign out
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </header>
@@ -65,29 +66,15 @@ export default function GroupsPage() {
                 <div className="px-4 py-6 sm:px-0">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl font-bold text-gray-900">Your Groups</h2>
-                        <button
-                            onClick={() => setShowCreateModal(true)}
-                            className="btn-primary"
-                        >
+                        <Button onClick={() => setShowCreateModal(true)}>
                             <PlusIcon className="h-5 w-5 mr-2" />
                             Create Group
-                        </button>
+                        </Button>
                     </div>
 
                     {!groups ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {[...Array(6)].map((_, i) => (
-                                <div key={i} className="card animate-pulse">
-                                    <div className="card-header">
-                                        <div className="h-6 bg-gray-200 rounded w-3/4"></div>
-                                        <div className="h-4 bg-gray-200 rounded w-1/2"></div>
-                                    </div>
-                                    <div className="card-content">
-                                        <div className="h-4 bg-gray-200 rounded w-full mb-2"></div>
-                                        <div className="h-4 bg-gray-200 rounded w-2/3"></div>
-                                    </div>
-                                </div>
-                            ))}
+                        <div className="flex justify-center py-12">
+                            <LoadingSpinner size="lg" />
                         </div>
                     ) : groups.length === 0 ? (
                         <div className="text-center py-12">
@@ -97,42 +84,19 @@ export default function GroupsPage() {
                                 Get started by creating your first photo group.
                             </p>
                             <div className="mt-6">
-                                <button
-                                    onClick={() => setShowCreateModal(true)}
-                                    className="btn-primary"
-                                >
+                                <Button onClick={() => setShowCreateModal(true)}>
                                     <PlusIcon className="h-5 w-5 mr-2" />
                                     Create your first group
-                                </button>
+                                </Button>
                             </div>
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {groups.map((group) => (
-                                <Link
+                                <GroupCard
                                     key={group.id}
-                                    href={`/groups/${group.id}`}
-                                    className="card hover:shadow-md transition-shadow cursor-pointer"
-                                >
-                                    <div className="card-header">
-                                        <h3 className="card-title text-lg">{group.name}</h3>
-                                        {group.description && (
-                                            <p className="card-description">{group.description}</p>
-                                        )}
-                                    </div>
-                                    <div className="card-content">
-                                        <div className="flex items-center justify-between text-sm text-gray-500">
-                                            <div className="flex items-center">
-                                                <UsersIcon className="h-4 w-4 mr-1" />
-                                                {group.member_count || 0} members
-                                            </div>
-                                            <div className="flex items-center">
-                                                <PhotoIcon className="h-4 w-4 mr-1" />
-                                                {group.is_private ? 'Private' : 'Public'}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </Link>
+                                    group={group}
+                                />
                             ))}
                         </div>
                     )}
@@ -140,15 +104,14 @@ export default function GroupsPage() {
             </main>
 
             {/* Create Group Modal */}
-            {showCreateModal && (
-                <CreateGroupModal
-                    onClose={() => setShowCreateModal(false)}
-                    onSuccess={() => {
-                        setShowCreateModal(false)
-                        mutate() // Refresh groups list
-                    }}
-                />
-            )}
+            <CreateGroupModal
+                isOpen={showCreateModal}
+                onClose={() => setShowCreateModal(false)}
+                onSuccess={() => {
+                    setShowCreateModal(false)
+                    mutate() // Refresh groups list
+                }}
+            />
         </div>
     )
 } 
