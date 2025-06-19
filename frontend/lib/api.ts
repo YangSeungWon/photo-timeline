@@ -86,7 +86,9 @@ export interface Photo {
   iso?: number;
   focal_length?: number;
   flash?: boolean;
-  point_gps?: any; // PostGIS geometry
+  point_gps?: any; // PostGIS geometry or WKT string
+  gps_latitude?: number;
+  gps_longitude?: number;
   gps_altitude?: number;
   gps_accuracy?: number;
   exif_data?: Record<string, any>;

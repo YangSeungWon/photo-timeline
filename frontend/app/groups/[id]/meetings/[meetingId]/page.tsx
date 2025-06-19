@@ -129,7 +129,7 @@ export default function MeetingDetailPage() {
                         </div>
 
                         <div className="flex space-x-3">
-                            {meeting.track_gps && (
+                            {(meeting.track_gps || (photos && photos.some(p => p.point_gps))) && (
                                 <button
                                     onClick={() => setShowMap(!showMap)}
                                     className={showMap ? 'btn-primary' : 'btn-outline'}
@@ -143,7 +143,7 @@ export default function MeetingDetailPage() {
                 </div>
 
                 {/* Map */}
-                {showMap && meeting.track_gps && (
+                {showMap && (meeting.track_gps || (photos && photos.some(p => p.point_gps))) && (
                     <div className="mb-8">
                         <MeetingMap
                             meeting={meeting}

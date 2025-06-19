@@ -24,41 +24,81 @@ interface MeetingMapProps {
 export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
     const mapRef = useRef<L.Map>(null)
 
-    // Parse GPS track from meeting
-    const trackCoordinates: LatLngExpression[] = []
-    if (meeting.track_gps) {
-        try {
-            // Assuming track_gps is a GeoJSON LineString
-            const geoJson = JSON.parse(meeting.track_gps)
-            if (geoJson.type === 'LineString' && geoJson.coordinates) {
-                geoJson.coordinates.forEach((coord: [number, number]) => {
-                    trackCoordinates.push([coord[1], coord[0]]) // [lat, lng]
-                })
-            }
-        } catch (error) {
-            console.error('Error parsing GPS track:', error)
-        }
-    }
+    // Parse photo locations with GPS data and sort by time
+    const photosWithGPS: Array<{ position: LatLngExpression; photo: Photo; timestamp: Date }> = []
 
-    // Parse photo locations
-    const photoMarkers: Array<{ position: LatLngExpression; photo: Photo }> = []
     photos.forEach(photo => {
-        if (photo.point_gps) {
+        if (photo.shot_at && (
+            (photo.gps_latitude && photo.gps_longitude) ||
+            photo.point_gps
+        )) {
             try {
-                // Assuming point_gps is a GeoJSON Point
-                const geoJson = JSON.parse(photo.point_gps)
-                if (geoJson.type === 'Point' && geoJson.coordinates) {
-                    const [lng, lat] = geoJson.coordinates
-                    photoMarkers.push({
-                        position: [lat, lng],
-                        photo,
-                    })
+                let lat: number, lng: number;
+
+                // First, try to use the separated latitude/longitude values
+                if (photo.gps_latitude && photo.gps_longitude) {
+                    lat = photo.gps_latitude;
+                    lng = photo.gps_longitude;
                 }
+                // Fallback to parsing point_gps
+                else if (photo.point_gps) {
+                    // Check if it's a WKT POINT format: "POINT(longitude latitude)"
+                    if (typeof photo.point_gps === 'string' && photo.point_gps.startsWith('POINT(')) {
+                        const match = photo.point_gps.match(/POINT\(([^\s]+)\s+([^\s]+)\)/);
+                        if (match) {
+                            lng = parseFloat(match[1]);
+                            lat = parseFloat(match[2]);
+                        } else {
+                            console.warn('Invalid WKT POINT format:', photo.point_gps);
+                            return;
+                        }
+                    } else if (typeof photo.point_gps === 'string') {
+                        // Try parsing as GeoJSON
+                        const geoJson = JSON.parse(photo.point_gps);
+                        if (geoJson.type === 'Point' && geoJson.coordinates) {
+                            [lng, lat] = geoJson.coordinates;
+                        } else {
+                            console.warn('Unknown GPS format:', photo.point_gps);
+                            return;
+                        }
+                    } else {
+                        // Assume it's already a parsed object
+                        if (photo.point_gps.type === 'Point' && photo.point_gps.coordinates) {
+                            [lng, lat] = photo.point_gps.coordinates;
+                        } else {
+                            console.warn('Unknown GPS object format:', photo.point_gps);
+                            return;
+                        }
+                    }
+                } else {
+                    return; // No GPS data available
+                }
+
+                // Validate coordinates
+                if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                    console.warn('Invalid GPS coordinates:', { lat, lng });
+                    return;
+                }
+
+                photosWithGPS.push({
+                    position: [lat, lng],
+                    photo,
+                    timestamp: new Date(photo.shot_at)
+                });
             } catch (error) {
-                console.error('Error parsing photo GPS:', error)
+                console.error('Error parsing photo GPS:', error, 'GPS data:', photo.point_gps);
             }
         }
     })
+
+    // Sort photos by timestamp to create chronological route
+    photosWithGPS.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+
+    // Create track coordinates from sorted photos
+    const trackCoordinates: LatLngExpression[] = photosWithGPS.map(item => item.position)
+
+    // Photo markers for display
+    const photoMarkers = photosWithGPS
 
     // Calculate map bounds
     const allCoordinates = [...trackCoordinates, ...photoMarkers.map(m => m.position)]
@@ -77,15 +117,14 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
     return (
         <div className="card">
             <div className="card-header">
-                <h3 className="card-title">GPS Track & Photo Locations</h3>
+                <h3 className="card-title">Photo Route & Locations</h3>
                 <p className="card-description">
-                    {trackCoordinates.length > 0 && `${trackCoordinates.length} track points`}
-                    {trackCoordinates.length > 0 && photoMarkers.length > 0 && ' • '}
-                    {photoMarkers.length > 0 && `${photoMarkers.length} photo locations`}
+                    {photosWithGPS.length > 0 && `${photosWithGPS.length} photos with GPS data`}
+                    {trackCoordinates.length > 1 && ` • Route from chronological order`}
                 </p>
             </div>
             <div className="card-content">
-                <div className="h-96 w-full rounded-lg overflow-hidden">
+                <div className="h-96 w-full rounded-lg overflow-hidden relative">
                     <MapContainer
                         ref={mapRef}
                         center={center}
@@ -98,19 +137,20 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
                             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         />
 
-                        {/* GPS Track */}
-                        {trackCoordinates.length > 0 && (
+                        {/* GPS Track from photos (chronological route) */}
+                        {trackCoordinates.length > 1 && (
                             <Polyline
                                 positions={trackCoordinates}
                                 color="#3b82f6"
                                 weight={3}
                                 opacity={0.8}
+                                dashArray="5, 10"
                             />
                         )}
 
                         {/* Photo Markers */}
                         {photoMarkers.map((marker, index) => (
-                            <Marker key={index} position={marker.position}>
+                            <Marker key={marker.photo.id} position={marker.position}>
                                 <Popup>
                                     <div className="p-2">
                                         <div className="flex items-center space-x-3">
@@ -127,7 +167,7 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
                                                 <p className="font-medium text-sm">{marker.photo.filename_orig}</p>
                                                 {marker.photo.shot_at && (
                                                     <p className="text-xs text-gray-500">
-                                                        {new Date(marker.photo.shot_at).toLocaleString()}
+                                                        #{index + 1} • {new Date(marker.photo.shot_at).toLocaleString()}
                                                     </p>
                                                 )}
                                                 {marker.photo.camera_make && marker.photo.camera_model && (
@@ -142,15 +182,16 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
                             </Marker>
                         ))}
                     </MapContainer>
-                </div>
 
-                {allCoordinates.length === 0 && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-gray-50 rounded-lg">
-                        <div className="text-center">
-                            <p className="text-gray-500">No GPS data available for this meeting</p>
+                    {photosWithGPS.length === 0 && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-gray-50 rounded-lg">
+                            <div className="text-center">
+                                <p className="text-gray-500">No photos with GPS data in this meeting</p>
+                                <p className="text-xs text-gray-400 mt-1">Photos need location information to appear on the map</p>
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
         </div>
     )
