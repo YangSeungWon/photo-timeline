@@ -106,8 +106,8 @@ def process_photo(photo_id: str, file_path: str) -> bool:
             if not success:
                 logger.warning(f"EXIF extraction failed for {photo_id}")
 
-            # Step 2: Incremental clustering - attach photo to appropriate meeting
-            _attach_incremental(session, photo)
+            # Step 2: Mark for batch clustering (debounced)
+            _mark_cluster_pending(str(photo.group_id))
 
             # Step 3: Generate thumbnail
             _generate_thumbnail(session, photo, file_path)
@@ -320,15 +320,119 @@ def _generate_thumbnail(session: Session, photo: Photo, file_path: Path) -> bool
         return False
 
 
-def _attach_incremental(session: Session, photo: Photo) -> bool:
+def _mark_cluster_pending(group_id: str) -> None:
     """
-    Incremental clustering based on user's design:
-    1. Check if photo's shot_at falls within existing meeting range
-    2. If not, find closest meeting within MEETING_GAP
-    3. If still no match, create new meeting
+    Mark group for debounced clustering using Redis TTL.
     
-    Uses FOR UPDATE for concurrency control.
+    Key insight: Only schedule ONE job per group, use TTL to detect "quiet period"
     """
+    if not redis_client:
+        logger.warning("Redis not available, falling back to immediate clustering")
+        # Fallback to immediate clustering if Redis is unavailable
+        with Session(engine) as session:
+            _cluster_group_photos_batch(group_id)
+        return
+    
+    ttl = settings.CLUSTER_DEBOUNCE_TTL
+    delay = settings.CLUSTER_RETRY_DELAY
+    
+    # Mark activity with TTL
+    pending_key = f"cluster:pending:{group_id}"
+    count_key = f"cluster:count:{group_id}"
+    job_key = f"cluster:job:{group_id}"
+    
+    # Extend activity window
+    redis_client.setex(pending_key, ttl, "1")
+    redis_client.incr(count_key)  # Statistics (optional)
+    
+    # Schedule SINGLE job if not already scheduled
+    if not redis_client.exists(job_key):
+        try:
+            # Schedule the debounced clustering job
+            default_queue.enqueue_in(
+                delay,
+                cluster_if_quiet,
+                group_id=group_id,
+                job_timeout=300  # 5 minutes timeout
+            )
+            # Mark that job is scheduled (prevent duplicate scheduling)
+            redis_client.setex(job_key, ttl + delay + 10, "1")  # Extra buffer
+            logger.info(f"Scheduled debounced clustering for group {group_id}")
+        except Exception as e:
+            logger.error(f"Failed to schedule cluster job for group {group_id}: {e}")
+
+
+def cluster_if_quiet(group_id: str) -> bool:
+    """
+    Execute full group clustering only if the group is "quiet" (no recent uploads).
+    If still busy, reschedule for later.
+    
+    This implements the core debounce logic:
+    - Check if upload activity is still ongoing
+    - If yes: schedule another attempt later
+    - If no: perform the full clustering and cleanup
+    """
+    if not redis_client:
+        logger.warning("Redis not available, performing clustering anyway")
+        with Session(engine) as session:
+            return _cluster_group_photos_batch(group_id)
+    
+    pending_key = f"cluster:pending:{group_id}"
+    count_key = f"cluster:count:{group_id}"
+    job_key = f"cluster:job:{group_id}"
+    
+    # Check if group is still receiving uploads
+    if redis_client.exists(pending_key):
+        # Still busy - reschedule
+        delay = settings.CLUSTER_RETRY_DELAY
+        try:
+            default_queue.enqueue_in(
+                delay,
+                cluster_if_quiet,
+                group_id=group_id,
+                job_timeout=300
+            )
+            logger.info(f"Group {group_id} still busy, rescheduled clustering")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to reschedule cluster job for group {group_id}: {e}")
+            return False
+    
+    # Group is quiet - perform clustering
+    try:
+        photo_count = redis_client.get(count_key) or "0"
+        logger.info(f"Starting batch clustering for group {group_id} ({photo_count} photos processed)")
+        
+        success = _cluster_group_photos_batch(group_id)
+        
+        if success:
+            logger.info(f"Completed batch clustering for group {group_id}")
+        else:
+            logger.error(f"Batch clustering failed for group {group_id}")
+        
+        # Cleanup Redis keys
+        redis_client.delete(count_key, job_key)
+        return success
+        
+    except Exception as e:
+        logger.error(f"Error in cluster_if_quiet for group {group_id}: {e}")
+        # Cleanup on error
+        redis_client.delete(count_key, job_key)
+        return False
+
+
+# Legacy incremental clustering functions - kept for reference
+# These are replaced by debounced batch clustering for better efficiency
+
+def _attach_incremental_legacy(session: Session, photo: Photo) -> bool:
+    """
+    LEGACY: Old incremental clustering approach.
+    Replaced by debounced batch clustering (_mark_cluster_pending + cluster_if_quiet).
+    
+    This function is kept for reference and emergency fallback if needed.
+    """
+    logger.warning("Using legacy incremental clustering - consider using debounced batch clustering instead")
+    
     if not photo.shot_at:
         logger.info(f"Photo {photo.id} has no timestamp, keeping in Default Meeting")
         return True
@@ -473,62 +577,79 @@ def cluster_group_if_ready(group_id: str, scheduled_time: int) -> bool:
 
 def _cluster_group_photos_batch(group_id: str) -> bool:
     """
-    Batch reclustering for the entire group - runs daily to merge and optimize meetings.
-    This is the idempotent self-healing function mentioned in the design.
+    Complete batch reclustering for the entire group.
     
-    Steps:
-    1. Get all photos with timestamps in the group
-    2. Re-cluster them using photo_core
-    3. Merge nearby meetings that should be combined
-    4. Update meeting time ranges and counts
+    This is the core function that handles:
+    1. All photos with timestamps → proper meetings
+    2. Photos without timestamps → stay in Default Meeting
+    3. Merge duplicate meetings on same date
+    4. Clean up empty meetings
+    
+    Designed to be idempotent and handle any edge cases.
     """
     try:
         with Session(engine) as session:
-            logger.info(f"Starting batch reclustering for group {group_id}")
+            logger.info(f"Starting batch clustering for group {group_id}")
             
-            # Get all photos with timestamps (excluding Default Meeting photos without timestamps)
-            photos = session.exec(
+            # Get all photos with timestamps
+            photos_with_timestamps = session.exec(
                 select(Photo).where(
                     Photo.group_id == group_id,
                     Photo.shot_at.is_not(None)
                 )
             ).all()
             
-            if len(photos) == 0:
+            if len(photos_with_timestamps) == 0:
                 logger.info(f"No photos with timestamps in group {group_id}")
                 return True
             
-            # Convert to format expected by photo_core
+            # Convert to photo_core format
             photo_dicts = []
-            for photo in photos:
+            for photo in photos_with_timestamps:
                 photo_dicts.append({
                     "id": str(photo.id),
                     "DateTimeOriginal": photo.shot_at,
                     "group_id": str(photo.group_id),
                 })
             
-            # Use photo_core clustering
+            # Use photo_core clustering algorithm
             clustered_photos = cluster_photos_into_meetings(photo_dicts)
             
-            # Start transaction for batch update
+            # Start transaction for atomic update
             with session.begin():
-                # Get existing non-default meetings
-                existing_meetings = session.exec(
+                # Step 1: Move all timestamped photos to Default Meeting temporarily
+                # This ensures clean state before reassignment
+                default_meeting = _get_or_create_default_meeting(session, group_id)
+                
+                for photo in photos_with_timestamps:
+                    if photo.meeting_id != default_meeting.id:
+                        photo.meeting_id = default_meeting.id
+                        session.add(photo)
+                
+                # Step 2: Delete all auto-generated meetings (keep manual ones)
+                auto_meetings = session.exec(
                     select(Meeting).where(
                         Meeting.group_id == group_id,
-                        Meeting.title != "Default Meeting"
+                        Meeting.title != "Default Meeting",
+                        # Add more conditions if needed to identify auto-generated meetings
+                        # For now, we'll be conservative and keep all non-default meetings
                     )
                 ).all()
                 
-                # Create mapping of meeting dates to existing meetings
-                meetings_by_date = {}
-                for meeting in existing_meetings:
-                    date_key = meeting.meeting_date
-                    if date_key not in meetings_by_date:
-                        meetings_by_date[date_key] = []
-                    meetings_by_date[date_key].append(meeting)
+                # Actually, let's be more careful - only delete empty meetings
+                empty_meetings = []
+                for meeting in auto_meetings:
+                    photo_count = session.exec(
+                        select(Photo).where(Photo.meeting_id == meeting.id)
+                    ).first()
+                    if not photo_count:
+                        empty_meetings.append(meeting)
                 
-                # Group clustered photos by meeting date
+                for meeting in empty_meetings:
+                    session.delete(meeting)
+                    logger.info(f"Deleted empty meeting {meeting.id}")
+                
+                # Step 3: Create new meetings from clustered data
                 clustered_by_date = {}
                 for clustered_photo in clustered_photos:
                     meeting_date = clustered_photo.get("meeting_date")
@@ -537,44 +658,87 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                             clustered_by_date[meeting_date] = []
                         clustered_by_date[meeting_date].append(clustered_photo)
                 
-                # Merge meetings for each date
-                for meeting_date, clustered_photos_for_date in clustered_by_date.items():
-                    existing_meetings_for_date = meetings_by_date.get(meeting_date, [])
-                    
-                    if len(existing_meetings_for_date) <= 1:
-                        # No merge needed, just update existing meeting or create new one
-                        if existing_meetings_for_date:
-                            _update_meeting_from_photos(session, existing_meetings_for_date[0], clustered_photos_for_date)
-                        else:
-                            _create_meeting_from_photos(session, group_id, meeting_date, clustered_photos_for_date)
-                    else:
-                        # Merge multiple meetings for the same date
-                        primary_meeting = existing_meetings_for_date[0]
-                        
-                        # Merge other meetings into the primary one
-                        for meeting_to_merge in existing_meetings_for_date[1:]:
-                            # Move photos from meeting_to_merge to primary_meeting
-                            photos_to_move = session.exec(
-                                select(Photo).where(Photo.meeting_id == meeting_to_merge.id)
-                            ).all()
-                            
-                            for photo in photos_to_move:
-                                photo.meeting_id = primary_meeting.id
-                                session.add(photo)
-                            
-                            # Delete the merged meeting
-                            session.delete(meeting_to_merge)
-                            logger.info(f"Merged meeting {meeting_to_merge.id} into {primary_meeting.id}")
-                        
-                        # Update the primary meeting with all photos for this date
-                        _update_meeting_from_photos(session, primary_meeting, clustered_photos_for_date)
+                meetings_created = 0
+                photos_moved = 0
                 
-                logger.info(f"Completed batch reclustering for group {group_id}")
+                for meeting_date, photos_for_date in clustered_by_date.items():
+                    if not photos_for_date:
+                        continue
+                    
+                    # Calculate time range for this cluster
+                    times = [p["DateTimeOriginal"] for p in photos_for_date]
+                    start_time = min(times)
+                    end_time = max(times)
+                    
+                    # Create new meeting
+                    new_meeting = Meeting(
+                        group_id=group_id,
+                        title=f"Meeting {meeting_date}",
+                        description=f"Auto-clustered meeting for {len(photos_for_date)} photos",
+                        start_time=start_time,
+                        end_time=end_time,
+                        meeting_date=meeting_date,
+                        photo_count=len(photos_for_date),
+                        participant_count=0,
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow(),
+                    )
+                    session.add(new_meeting)
+                    session.flush()  # Get ID
+                    
+                    # Move photos to this meeting
+                    for photo_data in photos_for_date:
+                        photo = session.get(Photo, photo_data["id"])
+                        if photo:
+                            photo.meeting_id = new_meeting.id
+                            session.add(photo)
+                            photos_moved += 1
+                    
+                    meetings_created += 1
+                    logger.info(f"Created meeting {new_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
+                
+                # Step 4: Update Default Meeting count
+                remaining_photos = session.exec(
+                    select(Photo).where(Photo.meeting_id == default_meeting.id)
+                ).all()
+                default_meeting.photo_count = len(remaining_photos)
+                default_meeting.updated_at = datetime.utcnow()
+                session.add(default_meeting)
+                
+                logger.info(f"Batch clustering completed for group {group_id}: "
+                          f"{meetings_created} meetings created, {photos_moved} photos moved")
                 return True
                 
     except Exception as e:
-        logger.error(f"Batch reclustering failed for group {group_id}: {e}")
+        logger.error(f"Batch clustering failed for group {group_id}: {e}")
         return False
+
+
+def _get_or_create_default_meeting(session: Session, group_id: str) -> Meeting:
+    """Get or create the Default Meeting for a group."""
+    default_meeting = session.exec(
+        select(Meeting).where(
+            Meeting.group_id == group_id,
+            Meeting.title == "Default Meeting"
+        )
+    ).first()
+    
+    if not default_meeting:
+        now = datetime.utcnow()
+        default_meeting = Meeting(
+            group_id=group_id,
+            title="Default Meeting",
+            description="Default meeting for photos without timestamps",
+            start_time=now,
+            end_time=now,
+            meeting_date=now.date(),
+            photo_count=0,
+            participant_count=0,
+        )
+        session.add(default_meeting)
+        session.flush()
+    
+    return default_meeting
 
 
 def _update_meeting_from_photos(session: Session, meeting: Meeting, clustered_photos: list) -> None:
