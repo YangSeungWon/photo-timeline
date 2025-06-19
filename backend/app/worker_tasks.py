@@ -150,8 +150,8 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
         )
         photos = session.exec(stmt).all()
 
-        if len(photos) < 2:
-            logger.info(f"Not enough photos for clustering in group {group_id}")
+        if len(photos) == 0:
+            logger.info(f"No photos with timestamps in group {group_id}")
             return True
 
         # Convert photos to dictionary format expected by photo_core
@@ -167,60 +167,68 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
         # Use photo_core clustering
         clustered_photos = cluster_photos_into_meetings(photo_dicts)
         
-        # Group clustered photos by meeting_id to create meetings
+        # Get existing meetings in the group (excluding default meeting)
+        existing_meetings = session.exec(
+            select(Meeting)
+            .where(Meeting.group_id == group_id)
+            .where(Meeting.title != "Default Meeting")
+        ).all()
+        existing_meetings_by_date = {m.meeting_date: m for m in existing_meetings}
+        
+        # Group clustered photos by meeting date
         meetings_data = {}
         for clustered_photo in clustered_photos:
-            meeting_id = clustered_photo.get("meeting_id")
-            if meeting_id:
-                if meeting_id not in meetings_data:
-                    meetings_data[meeting_id] = {
+            meeting_date = clustered_photo.get("meeting_date")
+            if meeting_date:
+                if meeting_date not in meetings_data:
+                    meetings_data[meeting_date] = {
                         "photos": [],
                         "start_time": clustered_photo["DateTimeOriginal"],
                         "end_time": clustered_photo["DateTimeOriginal"],
-                        "meeting_date": clustered_photo["meeting_date"]
                     }
                 
-                meetings_data[meeting_id]["photos"].append(clustered_photo)
+                meetings_data[meeting_date]["photos"].append(clustered_photo)
                 # Update time range
                 photo_time = clustered_photo["DateTimeOriginal"]
-                if photo_time < meetings_data[meeting_id]["start_time"]:
-                    meetings_data[meeting_id]["start_time"] = photo_time
-                if photo_time > meetings_data[meeting_id]["end_time"]:
-                    meetings_data[meeting_id]["end_time"] = photo_time
+                if photo_time < meetings_data[meeting_date]["start_time"]:
+                    meetings_data[meeting_date]["start_time"] = photo_time
+                if photo_time > meetings_data[meeting_date]["end_time"]:
+                    meetings_data[meeting_date]["end_time"] = photo_time
 
-        # Create or update meetings
-        for meeting_id, meeting_data in meetings_data.items():
-            meeting = session.get(Meeting, meeting_id)
-            if not meeting:
+        # Create or update meetings by date
+        for meeting_date, meeting_data in meetings_data.items():
+            # Use existing meeting if available, otherwise create new one
+            if meeting_date in existing_meetings_by_date:
+                meeting = existing_meetings_by_date[meeting_date]
+            else:
                 meeting = Meeting(
-                    id=meeting_id,
                     group_id=group_id,
-                    title=f"Meeting {meeting_data['meeting_date']}",
+                    title=f"Meeting {meeting_date}",
                     start_time=meeting_data["start_time"],
                     end_time=meeting_data["end_time"],
-                    meeting_date=meeting_data["meeting_date"],
-                    photo_count=len(meeting_data["photos"])
+                    meeting_date=meeting_date,
+                    photo_count=0,
+                    participant_count=0,
                 )
                 session.add(meeting)
-            else:
-                # Update existing meeting
-                meeting.start_time = meeting_data["start_time"]
-                meeting.end_time = meeting_data["end_time"]
-                meeting.photo_count = len(meeting_data["photos"])
-                session.add(meeting)
-
-        # Update photos with meeting assignments
-        for clustered_photo in clustered_photos:
-            photo_id = clustered_photo["id"]
-            meeting_id = clustered_photo.get("meeting_id")
+                session.flush()  # Get the ID
             
-            photo = session.get(Photo, photo_id)
-            if photo:
-                photo.meeting_id = meeting_id
-                session.add(photo)
+            # Update meeting info
+            meeting.start_time = meeting_data["start_time"]
+            meeting.end_time = meeting_data["end_time"]
+            meeting.photo_count = len(meeting_data["photos"])
+            session.add(meeting)
+            
+            # Assign photos to this meeting
+            for clustered_photo in meeting_data["photos"]:
+                photo_id = clustered_photo["id"]
+                photo = session.get(Photo, photo_id)
+                if photo:
+                    photo.meeting_id = meeting.id
+                    session.add(photo)
 
         session.commit()
-        logger.info(f"Clustered photos for group {group_id}")
+        logger.info(f"Clustered {len(photos)} photos into {len(meetings_data)} meetings for group {group_id}")
         return True
 
     except Exception as e:
