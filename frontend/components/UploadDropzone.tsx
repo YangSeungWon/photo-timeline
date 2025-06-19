@@ -47,16 +47,16 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
         if (files.length > 0) {
             handleFiles(files)
         }
-    }, [])
+    }, [handleFiles])
 
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || [])
         if (files.length > 0) {
             handleFiles(files)
         }
-    }, [])
+    }, [handleFiles])
 
-    const handleFiles = async (files: File[]) => {
+    const handleFiles = useCallback(async (files: File[]) => {
         if (!token) return
 
         const newUploadingFiles: UploadingFile[] = files.map(file => ({
@@ -135,7 +135,7 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
                 )
             }
         }
-    }
+    }, [token, groupId])
 
     const allCompleted = uploadingFiles.length > 0 && uploadingFiles.every(f => f.status === 'completed')
     const hasErrors = uploadingFiles.some(f => f.status === 'error')

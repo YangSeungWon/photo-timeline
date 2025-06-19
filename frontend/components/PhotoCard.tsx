@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { XMarkIcon, CalendarIcon, CameraIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { Photo } from '@/lib/api'
 
@@ -47,9 +48,11 @@ export default function PhotoCard({ photo, onClose }: PhotoCardProps) {
                 <div className="flex flex-1 overflow-hidden">
                     {/* Image */}
                     <div className="flex-1 flex items-center justify-center bg-gray-100 p-4">
-                        <img
+                        <Image
                             src={`/api/v1/photos/${photo.id}/full`} // Assuming this endpoint exists
                             alt={photo.filename_orig}
+                            width={800}
+                            height={600}
                             className="max-w-full max-h-full object-contain"
                             onError={(e) => {
                                 // Fallback to thumbnail if full image fails

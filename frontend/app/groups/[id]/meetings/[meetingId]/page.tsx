@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import useSWR from 'swr'
 // import PhotoAlbum from 'react-photo-album'
 import {
@@ -194,9 +195,11 @@ export default function MeetingDetailPage() {
                                             className="aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
                                             onClick={() => setSelectedPhoto(albumPhoto.photo)}
                                         >
-                                            <img
+                                            <Image
                                                 src={albumPhoto.src}
                                                 alt={albumPhoto.alt}
+                                                width={400}
+                                                height={400}
                                                 className="w-full h-full object-cover"
                                             />
                                         </div>

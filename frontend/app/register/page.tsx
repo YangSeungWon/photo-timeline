@@ -66,11 +66,11 @@ export default function RegisterPage() {
                             Check Your Email!
                         </h2>
                         <p className="mt-2 text-center text-sm text-gray-600">
-                            We've sent a verification link to your email address.
+                            We&apos;ve sent a verification link to your email address.
                             Please check your email and click the link to activate your account.
                         </p>
                         <p className="mt-4 text-center text-sm text-gray-500">
-                            Don't see the email? Check your spam folder or{' '}
+                            Don&apos;t see the email? Check your spam folder or{' '}
                             <button
                                 className="text-blue-600 hover:text-blue-500 underline"
                                 onClick={() => window.location.reload()}

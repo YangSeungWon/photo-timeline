@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import Image from 'next/image'
 import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet'
 import { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -114,9 +115,11 @@ export default function MeetingMap({ meeting, photos }: MeetingMapProps) {
                                     <div className="p-2">
                                         <div className="flex items-center space-x-3">
                                             {marker.photo.filename_thumb && (
-                                                <img
+                                                <Image
                                                     src={`/api/v1/photos/${marker.photo.id}/thumb`}
                                                     alt={marker.photo.filename_orig}
+                                                    width={64}
+                                                    height={64}
                                                     className="w-16 h-16 object-cover rounded"
                                                 />
                                             )}
