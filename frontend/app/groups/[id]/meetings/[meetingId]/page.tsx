@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import Image from 'next/image'
 import useSWR from 'swr'
 // import PhotoAlbum from 'react-photo-album'
 import {
@@ -18,6 +17,7 @@ import { authenticatedFetcher } from '@/lib/swr-fetcher'
 import { Meeting, Photo, endpoints } from '@/lib/api'
 import MeetingMap from '@/components/MeetingMap'
 import PhotoCard from '@/components/PhotoCard'
+import AuthenticatedImage from '@/components/AuthenticatedImage'
 
 export default function MeetingDetailPage() {
     const params = useParams()
@@ -195,7 +195,7 @@ export default function MeetingDetailPage() {
                                             className="aspect-square bg-gray-100 rounded-lg overflow-hidden cursor-pointer hover:opacity-90 transition-opacity"
                                             onClick={() => setSelectedPhoto(albumPhoto.photo)}
                                         >
-                                            <Image
+                                            <AuthenticatedImage
                                                 src={albumPhoto.src}
                                                 alt={albumPhoto.alt}
                                                 width={400}

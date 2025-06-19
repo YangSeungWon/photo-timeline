@@ -210,7 +210,20 @@ async def get_photo(
             status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found"
         )
 
-    # TODO: Add proper authorization check based on group membership
+    # Check group membership
+    membership = db.exec(
+        select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.group_id == photo.group_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
 
     return PhotoResponse.from_photo_model(photo)
 
@@ -228,7 +241,20 @@ async def get_photo_full(
             status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found"
         )
 
-    # TODO: Add proper authorization check based on group membership
+    # Check group membership
+    membership = db.exec(
+        select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.group_id == photo.group_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
     
     # Construct original file path
     orig_path = Path("/srv/photo-timeline/storage") / str(photo.group_id) / photo.filename_orig
@@ -265,7 +291,20 @@ async def get_photo_thumbnail(
             detail="Thumbnail not available. Photo may still be processing."
         )
 
-    # TODO: Add proper authorization check based on group membership
+    # Check group membership
+    membership = db.exec(
+        select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.group_id == photo.group_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
     
     # Construct thumbnail file path
     # Assuming thumbnails are stored in the same directory structure as originals
