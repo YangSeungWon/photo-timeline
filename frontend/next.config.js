@@ -7,7 +7,7 @@ const nextConfig = {
                 destination: process.env.NEXT_PUBLIC_API_URL ?
                     `${process.env.NEXT_PUBLIC_API_URL.replace('/api/v1', '')}/:path*` :
                     // In Docker environment, use backend service name
-                    process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV ?
+                    (process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV === 'true') ?
                         'http://backend:8000/:path*' :
                         'http://localhost:8000/:path*',
             },
@@ -15,7 +15,7 @@ const nextConfig = {
     },
     images: {
         // Disable image optimization for API routes to avoid proxy issues
-        unoptimized: process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV,
+        unoptimized: Boolean(process.env.NODE_ENV === 'production' || process.env.DOCKER_ENV === 'true'),
         domains: ['localhost', 'backend'],
         remotePatterns: [
             {
