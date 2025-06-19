@@ -175,6 +175,18 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
         ).all()
         existing_meetings_by_date = {m.meeting_date: m for m in existing_meetings}
         
+        # Clean approach: Delete existing auto-generated meetings first
+        # (Keep only Default Meeting and manually created meetings)
+        auto_meetings = session.exec(
+            select(Meeting)
+            .where(Meeting.group_id == group_id)
+            .where(Meeting.title.like("Meeting %"))  # Auto-generated meetings
+        ).all()
+        
+        for auto_meeting in auto_meetings:
+            session.delete(auto_meeting)
+        session.flush()
+
         # Group clustered photos by meeting date
         meetings_data = {}
         for clustered_photo in clustered_photos:
@@ -195,29 +207,19 @@ def _cluster_group_photos(session: Session, group_id: str) -> bool:
                 if photo_time > meetings_data[meeting_date]["end_time"]:
                     meetings_data[meeting_date]["end_time"] = photo_time
 
-        # Create or update meetings by date
+        # Create new meetings based on clustered data
         for meeting_date, meeting_data in meetings_data.items():
-            # Use existing meeting if available, otherwise create new one
-            if meeting_date in existing_meetings_by_date:
-                meeting = existing_meetings_by_date[meeting_date]
-            else:
-                meeting = Meeting(
-                    group_id=group_id,
-                    title=f"Meeting {meeting_date}",
-                    start_time=meeting_data["start_time"],
-                    end_time=meeting_data["end_time"],
-                    meeting_date=meeting_date,
-                    photo_count=0,
-                    participant_count=0,
-                )
-                session.add(meeting)
-                session.flush()  # Get the ID
-            
-            # Update meeting info
-            meeting.start_time = meeting_data["start_time"]
-            meeting.end_time = meeting_data["end_time"]
-            meeting.photo_count = len(meeting_data["photos"])
+            meeting = Meeting(
+                group_id=group_id,
+                title=f"Meeting {meeting_date}",
+                start_time=meeting_data["start_time"],
+                end_time=meeting_data["end_time"],
+                meeting_date=meeting_date,
+                photo_count=len(meeting_data["photos"]),
+                participant_count=0,
+            )
             session.add(meeting)
+            session.flush()  # Get the ID
             
             # Assign photos to this meeting
             for clustered_photo in meeting_data["photos"]:

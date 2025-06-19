@@ -1,11 +1,10 @@
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MEETING_GAP_HOURS = 4
+DEFAULT_MEETING_GAP_HOURS = 12
 
 
 def cluster_photos_into_meetings(
@@ -13,7 +12,11 @@ def cluster_photos_into_meetings(
     gap_hours: int = DEFAULT_MEETING_GAP_HOURS,
 ) -> List[Dict[str, Any]]:
     """
-    Groups photos into meetings based on a time gap and assigns meeting IDs.
+    Groups photos into meetings based on a time gap using single-pass O(n) algorithm.
+    
+    핵심: "이미 모인 클러스터는 다시 검사하지 않는다"
+    - 한 번만 스캔(O(n))으로 끝남
+    - 클러스터 수만큼만 미팅 레코드가 생김
 
     Args:
         photos: A list of photo dictionaries, each with a 'DateTimeOriginal' key.
@@ -21,8 +24,8 @@ def cluster_photos_into_meetings(
                    part of the same meeting.
 
     Returns:
-        A list of photo dictionaries with 'meeting_id' and 'meeting_date' added.
-        Photos without timestamps will have meeting_id=None.
+        A list of photo dictionaries with 'meeting_date' added.
+        Photos without timestamps will have meeting_date=None.
     """
     if not photos:
         return []
@@ -40,61 +43,48 @@ def cluster_photos_into_meetings(
                     timestamp = datetime.strptime(timestamp, "%Y:%m:%d %H:%M:%S")
                 except ValueError:
                     logger.warning(f"Could not parse timestamp: {timestamp}")
-                    undated_photos.append(
-                        {**photo, "meeting_id": None, "meeting_date": None}
-                    )
+                    undated_photos.append({**photo, "meeting_date": None})
                     continue
 
             dated_photos.append({**photo, "DateTimeOriginal": timestamp})
         else:
-            undated_photos.append({**photo, "meeting_id": None, "meeting_date": None})
+            undated_photos.append({**photo, "meeting_date": None})
 
     if not dated_photos:
         return undated_photos
 
-    # Sort photos chronologically
+    # Sort photos chronologically (핵심: 정렬 누락 방지)
     dated_photos.sort(key=lambda p: p["DateTimeOriginal"])
 
-    # Group into meetings
+    # Single-pass clustering (O(n) 보장)
+    MEETING_GAP = timedelta(hours=gap_hours)
     meetings = []
-    current_meeting = [dated_photos[0]]
-    time_gap = timedelta(hours=gap_hours)
+    current = [dated_photos[0]]  # 진행 중인 클러스터
 
-    for i in range(1, len(dated_photos)):
-        prev_photo = dated_photos[i - 1]
-        current_photo = dated_photos[i]
-
-        prev_time = prev_photo["DateTimeOriginal"]
-        current_time = current_photo["DateTimeOriginal"]
-
-        if current_time - prev_time > time_gap:
-            # Finish the current meeting and start a new one
-            meetings.append(current_meeting)
-            current_meeting = [current_photo]
+    # zip(photos, photos[1:]) 패턴으로 단일 패스
+    for prev, nxt in zip(dated_photos, dated_photos[1:]):
+        if nxt["DateTimeOriginal"] - prev["DateTimeOriginal"] <= MEETING_GAP:
+            current.append(nxt)  # 같은 미팅
         else:
-            current_meeting.append(current_photo)
+            meetings.append(current)  # 현재 클러스터 완료
+            current = [nxt]  # 새 미팅 시작
+    
+    meetings.append(current)  # 마지막 클러스터
 
-    # Add the last meeting
-    if current_meeting:
-        meetings.append(current_meeting)
-
-    # Assign meeting IDs and dates
+    # Assign meeting dates (meeting_id는 백엔드에서 처리)
     result_photos = []
-
-    for meeting in meetings:
-        meeting_id = str(uuid4())
+    
+    for meeting_cluster in meetings:
         # Use the date of the first photo in the meeting
-        meeting_date = meeting[0]["DateTimeOriginal"].date()
-
-        for photo in meeting:
-            result_photos.append(
-                {**photo, "meeting_id": meeting_id, "meeting_date": meeting_date}
-            )
+        meeting_date = meeting_cluster[0]["DateTimeOriginal"].date()
+        
+        for photo in meeting_cluster:
+            result_photos.append({**photo, "meeting_date": meeting_date})
 
     # Add undated photos
     result_photos.extend(undated_photos)
 
-    logger.info(f"Clustered {len(dated_photos)} photos into {len(meetings)} meetings")
+    logger.info(f"Clustered {len(dated_photos)} photos into {len(meetings)} meetings using single-pass algorithm")
 
     return result_photos
 
