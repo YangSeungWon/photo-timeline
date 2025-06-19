@@ -1,6 +1,8 @@
 import logging
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
+from datetime import datetime
 
 from sqlmodel import Session, select
 from geoalchemy2.shape import to_shape
@@ -13,6 +15,42 @@ from .models.group import Group
 from photo_core import extract_exif, cluster_photos_into_meetings
 
 logger = logging.getLogger(__name__)
+
+
+def serialize_exif_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert EXIF data to JSON-serializable format."""
+    serialized = {}
+    
+    for key, value in data.items():
+        if isinstance(value, datetime):
+            # Convert datetime to ISO format string
+            serialized[key] = value.isoformat()
+        elif isinstance(value, (list, tuple)):
+            # Handle lists/tuples recursively
+            serialized[key] = [
+                item.isoformat() if isinstance(item, datetime) else item
+                for item in value
+            ]
+        elif isinstance(value, dict):
+            # Handle nested dictionaries recursively
+            serialized[key] = serialize_exif_data(value)
+        elif hasattr(value, '__dict__'):
+            # Handle objects with attributes (like Point objects)
+            try:
+                serialized[key] = str(value)
+            except:
+                serialized[key] = None
+        else:
+            # Keep primitive types as-is
+            try:
+                # Test if value is JSON serializable
+                json.dumps(value)
+                serialized[key] = value
+            except (TypeError, ValueError):
+                # If not serializable, convert to string
+                serialized[key] = str(value) if value is not None else None
+    
+    return serialized
 
 
 def process_photo(photo_id: str, file_path: str) -> bool:
@@ -74,8 +112,9 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
     try:
         metadata = extract_exif(file_path)
 
-        # Update photo with extracted metadata
-        photo.exif_data = metadata
+        # Serialize EXIF data for JSON storage
+        serialized_metadata = serialize_exif_data(metadata)
+        photo.exif_data = serialized_metadata
 
         # Set taken_at from EXIF datetime
         if "datetime" in metadata:
