@@ -1,4 +1,5 @@
 import os
+import secrets
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -10,19 +11,19 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql://user:password@localhost:5432/phototimeline"
     AUTO_CREATE_TABLES: bool = True
 
-    # JWT Authentication
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # JWT Authentication - 보안상 중요한 설정
+    SECRET_KEY: str = secrets.token_urlsafe(32)  # 자동 생성되는 시크릿 키
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    # Redis
+    # Redis - 환경변수 우선 사용
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
 
     # File Storage
-    UPLOAD_DIR: str = "./uploads"
+    UPLOAD_DIR: str = "/srv/photo-timeline/storage"  # Docker 볼륨 경로
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
     ALLOWED_EXTENSIONS: set = {
         ".jpg",
@@ -39,12 +40,12 @@ class Settings(BaseSettings):
     THUMBNAIL_QUALITY: int = 85
 
     # Development settings
-    debug: bool = False
+    DEBUG: bool = False
 
     # Frontend URL for email links
     FRONTEND_URL: str = "http://localhost:3067"
 
-    # Email settings
+    # Email settings - 환경변수로만 설정
     MAIL_HOST: str = "smtp.gmail.com"
     MAIL_PORT: int = 587
     MAIL_USER: str = ""
