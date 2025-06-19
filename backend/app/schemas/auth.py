@@ -28,3 +28,9 @@ class TokenData(BaseModel):
     """Token payload data."""
 
     user_id: str | None = None
+
+
+class RefreshTokenRequest(BaseModel):
+    """Refresh token request."""
+    
+    refresh_token: str

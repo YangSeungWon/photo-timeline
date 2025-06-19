@@ -1,8 +1,10 @@
 from uuid import UUID
-from typing import List
+from typing import List, Optional
 import logging
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from ..core.database import get_db
@@ -64,10 +66,16 @@ async def upload_photo(
     ).first()
 
     if not default_meeting:
+        now = datetime.utcnow()
         default_meeting = Meeting(
             group_id=group_id,
             title="Default Meeting",
             description="Auto-created meeting for uploaded photos",
+            start_time=now,
+            end_time=now,
+            meeting_date=now.date(),
+            photo_count=0,
+            participant_count=0,
         )
         db.add(default_meeting)
         db.commit()
@@ -125,39 +133,67 @@ async def upload_photo(
 
 @router.get("", response_model=List[PhotoResponse])
 async def list_photos(
-    group_id: UUID,
+    group_id: Optional[UUID] = Query(None, description="Filter by group ID"),
+    meeting_id: Optional[UUID] = Query(None, description="Filter by meeting ID"),
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """List photos in a group."""
-    # Verify group access
-    group = db.exec(select(Group).where(Group.id == group_id)).first()
-    if not group:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Group not found"
-        )
+    """List photos in a group or meeting."""
+    query = select(Photo)
+    
+    if group_id:
+        # Verify group access
+        group = db.exec(select(Group).where(Group.id == group_id)).first()
+        if not group:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Group not found"
+            )
 
-    # Check membership
-    membership = db.exec(
-        select(Membership).where(
-            Membership.user_id == current_user.id,
-            Membership.group_id == group_id,
-            Membership.status == MembershipStatus.ACTIVE,
-        )
-    ).first()
+        # Check membership
+        membership = db.exec(
+            select(Membership).where(
+                Membership.user_id == current_user.id,
+                Membership.group_id == group_id,
+                Membership.status == MembershipStatus.ACTIVE,
+            )
+        ).first()
 
-    if not membership:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this group",
-        )
+        if not membership:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a member of this group",
+            )
+        
+        query = query.where(Photo.group_id == group_id)
+    
+    if meeting_id:
+        # Verify meeting access through group membership
+        meeting = db.exec(select(Meeting).where(Meeting.id == meeting_id)).first()
+        if not meeting:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Meeting not found"
+            )
+        
+        # Check group membership for the meeting's group
+        membership = db.exec(
+            select(Membership).where(
+                Membership.user_id == current_user.id,
+                Membership.group_id == meeting.group_id,
+                Membership.status == MembershipStatus.ACTIVE,
+            )
+        ).first()
 
-    # Get photos (for now, we'll get all photos since we don't have group association yet)
-    # TODO: Add group_id to Photo model or use Meeting relationship
-    photos = db.exec(select(Photo).offset(offset).limit(limit)).all()
+        if not membership:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a member of this group",
+            )
+        
+        query = query.where(Photo.meeting_id == meeting_id)
 
+    photos = db.exec(query.offset(offset).limit(limit)).all()
     return photos
 
 
@@ -177,3 +213,42 @@ async def get_photo(
     # TODO: Add proper authorization check based on group membership
 
     return photo
+
+
+@router.get("/{photo_id}/thumb")
+async def get_photo_thumbnail(
+    photo_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get a photo thumbnail."""
+    photo = db.exec(select(Photo).where(Photo.id == photo_id)).first()
+    if not photo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found"
+        )
+
+    # Check if thumbnail exists
+    if not photo.filename_thumb:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Thumbnail not available. Photo may still be processing."
+        )
+
+    # TODO: Add proper authorization check based on group membership
+    
+    # Construct thumbnail file path
+    # Assuming thumbnails are stored in the same directory structure as originals
+    # but with a different filename
+    thumb_path = Path("/srv/photo-timeline/storage") / str(photo.group_id) / photo.filename_thumb
+    
+    if not thumb_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail file not found"
+        )
+
+    return FileResponse(
+        path=str(thumb_path),
+        media_type=photo.mime_type or "image/jpeg",
+        filename=photo.filename_thumb
+    )

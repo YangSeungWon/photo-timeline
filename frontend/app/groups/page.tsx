@@ -48,7 +48,7 @@ export default function GroupsPage() {
                     <div className="flex justify-between items-center py-6">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">Photo Timeline</h1>
-                            <p className="mt-1 text-sm text-gray-500">Welcome back, {user.username}</p>
+                            <p className="mt-1 text-sm text-gray-500">Welcome back, {user.display_name}</p>
                         </div>
                         <button
                             onClick={logout}
@@ -128,7 +128,7 @@ export default function GroupsPage() {
                                             </div>
                                             <div className="flex items-center">
                                                 <PhotoIcon className="h-4 w-4 mr-1" />
-                                                {group.is_public ? 'Public' : 'Private'}
+                                                {group.is_private ? 'Private' : 'Public'}
                                             </div>
                                         </div>
                                     </div>

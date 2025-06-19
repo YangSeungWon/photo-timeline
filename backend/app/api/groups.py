@@ -1,5 +1,6 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session, select, func
 
 from ..core.database import get_db
@@ -10,6 +11,57 @@ from ..models.membership import Membership, MembershipRole, MembershipStatus
 from ..schemas.group import GroupCreate, GroupResponse, GroupJoinRequest
 
 router = APIRouter()
+
+
+@router.get("", response_model=List[GroupResponse])
+async def list_groups(
+    member_of: bool = Query(False, description="Filter to groups the user is a member of"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List groups."""
+    if member_of:
+        # Get groups where the user is an active member
+        query = (
+            select(Group, func.count(Membership.id).label("member_count"))
+            .join(Membership, Group.id == Membership.group_id)
+            .where(
+                Membership.user_id == current_user.id,
+                Membership.status == MembershipStatus.ACTIVE,
+            )
+            .group_by(Group.id)
+        )
+        
+        results = db.exec(query).all()
+        
+        groups = []
+        for group, member_count in results:
+            group_response = GroupResponse.model_validate(group)
+            group_response.member_count = member_count
+            groups.append(group_response)
+            
+        return groups
+    else:
+        # Get all public groups (if not filtering by membership)
+        query = (
+            select(Group, func.count(Membership.id).label("member_count"))
+            .outerjoin(
+                Membership,
+                (Group.id == Membership.group_id) & (Membership.status == MembershipStatus.ACTIVE)
+            )
+            .where(Group.is_private == False)
+            .group_by(Group.id)
+        )
+        
+        results = db.exec(query).all()
+        
+        groups = []
+        for group, member_count in results:
+            group_response = GroupResponse.model_validate(group)
+            group_response.member_count = member_count or 0
+            groups.append(group_response)
+            
+        return groups
 
 
 @router.post("", response_model=GroupResponse)

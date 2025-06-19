@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { api, handleApiError } from '@/lib/api'
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
 	const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
 	const [message, setMessage] = useState('')
 	const [email, setEmail] = useState('')
@@ -25,11 +25,11 @@ export default function VerifyEmailPage() {
 				const response = await api.post('/auth/verify-email', null, {
 					params: { token }
 				})
-				
+
 				setStatus('success')
 				setMessage(response.data.message)
 				setEmail(response.data.email)
-				
+
 				// Redirect to login after 3 seconds
 				setTimeout(() => {
 					router.push('/login?message=Email verified! You can now sign in.')
@@ -82,10 +82,10 @@ export default function VerifyEmailPage() {
 							Redirecting you to the login page...
 						</p>
 					</div>
-					
+
 					<div className="text-center">
-						<Link 
-							href="/login" 
+						<Link
+							href="/login"
 							className="font-medium text-blue-600 hover:text-blue-500"
 						>
 							Go to Login →
@@ -115,17 +115,17 @@ export default function VerifyEmailPage() {
 						The verification link may have expired or been used already.
 					</p>
 				</div>
-				
+
 				<div className="text-center space-y-4">
-					<Link 
-						href="/register" 
+					<Link
+						href="/register"
 						className="font-medium text-blue-600 hover:text-blue-500"
 					>
 						← Back to Registration
 					</Link>
 					<br />
-					<Link 
-						href="/login" 
+					<Link
+						href="/login"
 						className="font-medium text-blue-600 hover:text-blue-500"
 					>
 						Try Signing In →
@@ -133,5 +133,24 @@ export default function VerifyEmailPage() {
 				</div>
 			</div>
 		</div>
+	)
+}
+
+export default function VerifyEmailPage() {
+	return (
+		<Suspense fallback={
+			<div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+				<div className="max-w-md w-full space-y-8">
+					<div className="text-center">
+						<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+						<h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+							Loading...
+						</h2>
+					</div>
+				</div>
+			</div>
+		}>
+			<VerifyEmailContent />
+		</Suspense>
 	)
 } 

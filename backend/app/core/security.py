@@ -57,3 +57,12 @@ def verify_token(token: str) -> Union[str, None]:
         return user_id
     except jwt.JWTError:
         return None
+
+
+def decode_jwt_token(token: str) -> dict:
+    """Decode a JWT token and return the payload."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except jwt.JWTError as e:
+        raise ValueError(f"Invalid token: {e}")

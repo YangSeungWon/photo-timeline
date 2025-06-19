@@ -17,11 +17,11 @@ class Group(SQLModel, table=True):
     max_members: Optional[int] = Field(default=None)
 
     # Ownership
-    owner_id: UUID = Field(foreign_key="user.id")
+    created_by: UUID = Field(foreign_key="user.id")
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: Optional[datetime] = Field(default=None)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Group image
     cover_photo_filename: Optional[str] = Field(default=None, max_length=255)

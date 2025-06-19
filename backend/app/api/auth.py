@@ -8,6 +8,7 @@ from ..core.security import (
     get_password_hash,
     create_access_token,
     create_refresh_token,
+    decode_jwt_token,
 )
 from ..core.email import (
     generate_verification_token,
@@ -17,7 +18,7 @@ from ..core.email import (
 )
 from ..core.deps import get_current_active_user
 from ..models.user import User
-from ..schemas.auth import UserRegister, UserLogin, Token
+from ..schemas.auth import UserRegister, UserLogin, Token, RefreshTokenRequest
 from ..schemas.user import UserResponse
 
 router = APIRouter()
@@ -158,3 +159,40 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
 async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
     """Get current user information."""
     return current_user
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(request_data: RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Refresh access token using refresh token."""
+    refresh_token = request_data.refresh_token
+    
+    try:
+        payload = decode_jwt_token(refresh_token)
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Find user
+    user = db.exec(select(User).where(User.id == user_id)).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Create new tokens
+    access_token = create_access_token(subject=str(user.id))
+    new_refresh_token = create_refresh_token(subject=str(user.id))
+
+    return Token(access_token=access_token, refresh_token=new_refresh_token)

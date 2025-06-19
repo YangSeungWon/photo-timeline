@@ -11,7 +11,7 @@ import { authenticatedApi, endpoints, CreateGroupRequest, handleApiError } from 
 const createGroupSchema = z.object({
     name: z.string().min(1, 'Group name is required').max(100, 'Name must be less than 100 characters'),
     description: z.string().max(500, 'Description must be less than 500 characters').optional(),
-    is_public: z.boolean(),
+    is_private: z.boolean(),
 })
 
 type CreateGroupFormData = z.infer<typeof createGroupSchema>
@@ -32,7 +32,7 @@ export default function CreateGroupModal({ onClose, onSuccess }: CreateGroupModa
     } = useForm<CreateGroupFormData>({
         resolver: zodResolver(createGroupSchema),
         defaultValues: {
-            is_public: false,
+            is_private: true,
         },
     })
 
@@ -95,12 +95,12 @@ export default function CreateGroupModal({ onClose, onSuccess }: CreateGroupModa
 
                     <div className="flex items-center">
                         <input
-                            {...register('is_public')}
+                            {...register('is_private')}
                             type="checkbox"
                             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                         />
-                        <label htmlFor="is_public" className="ml-2 block text-sm text-gray-900">
-                            Make this group public
+                        <label htmlFor="is_private" className="ml-2 block text-sm text-gray-900">
+                            Make this group private
                         </label>
                     </div>
 

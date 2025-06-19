@@ -2,11 +2,11 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 
 // Types
 export interface User {
-  id: number;
+  id: string;
   email: string;
-  full_name?: string;
-  is_active: boolean;
+  display_name: string;
   created_at: string;
+  updated_at: string;
 }
 
 export interface LoginRequest {
@@ -27,44 +27,84 @@ export interface TokenResponse {
 }
 
 export interface Group {
-  id: number;
+  id: string;
   name: string;
   description?: string;
-  is_public: boolean;
+  is_private: boolean;
+  created_by: string;
   member_count?: number;
   created_at: string;
+  updated_at: string;
 }
 
 export interface CreateGroupRequest {
   name: string;
   description?: string;
-  is_public: boolean;
+  is_private: boolean;
 }
 
 export interface Meeting {
-  id: number;
-  name: string;
+  id: string;
+  group_id: string;
+  title?: string;
   description?: string;
-  date: string;
-  group_id: number;
+  start_time: string;
+  end_time: string;
+  meeting_date: string;
+  track_gps?: string; // WKT string representation
+  bbox_north?: number;
+  bbox_south?: number;
+  bbox_east?: number;
+  bbox_west?: number;
+  photo_count: number;
+  participant_count: number;
   created_at: string;
+  updated_at?: string;
+  cover_photo_id?: string;
 }
 
 export interface Photo {
-  id: number;
+  id: string;
+  group_id: string;
+  uploader_id: string;
+  meeting_id?: string;
   filename_orig: string;
+  filename_thumb?: string;
+  filename_medium?: string;
   file_size: number;
-  taken_at?: string;
-  latitude?: number;
-  longitude?: number;
-  meeting_id?: number;
-  uploaded_by: number;
-  created_at: string;
+  file_hash: string;
+  mime_type: string;
+  shot_at?: string;
+  camera_make?: string;
+  camera_model?: string;
+  lens_model?: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  aperture?: number;
+  shutter_speed?: string;
+  iso?: number;
+  focal_length?: number;
+  flash?: boolean;
+  point_gps?: any; // PostGIS geometry
+  gps_altitude?: number;
+  gps_accuracy?: number;
+  exif_data?: Record<string, any>;
+  caption?: string;
+  tags?: string;
+  is_processed: boolean;
+  processing_error?: string;
+  uploaded_at: string;
+  updated_at?: string;
+  is_public: boolean;
+  is_flagged: boolean;
+  flagged_reason?: string;
 }
 
 export interface PhotoUploadResponse {
-  id: number;
-  filename_orig: string;
+  id: string;
+  filename: string;
+  status: string;
   message: string;
 }
 
@@ -109,8 +149,8 @@ export const endpoints = {
   // Photos
   photos: "/photos",
   photosUpload: "/photos/upload",
-  photoById: (id: number) => `/photos/${id}`,
-  photoThumb: (id: number) => `/photos/${id}/thumb`,
+  photoById: (id: string) => `/photos/${id}`,
+  photoThumb: (id: string) => `/photos/${id}/thumb`,
 
   // Meetings
   meetings: "/meetings",

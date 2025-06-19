@@ -101,7 +101,7 @@ export default function GroupDetailPage() {
                                 </div>
                                 <div className="flex items-center">
                                     <PhotoIcon className="h-4 w-4 mr-1" />
-                                    {group.is_public ? 'Public' : 'Private'}
+                                    {group.is_private ? 'Private' : 'Public'}
                                 </div>
                             </div>
                         </div>
