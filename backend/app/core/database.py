@@ -22,7 +22,7 @@ def create_database_engine():
     
     engine = create_engine(
         settings.DATABASE_URL,
-        echo=settings.debug,
+        echo=settings.DEBUG,
         pool_pre_ping=True,
         pool_recycle=300,  # Recycle connections every 5 minutes
         pool_size=10,
