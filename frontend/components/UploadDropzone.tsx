@@ -26,36 +26,6 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
     const fileInputRef = useRef<HTMLInputElement>(null)
     const { token } = useAuth()
 
-    const handleDragOver = useCallback((e: React.DragEvent) => {
-        e.preventDefault()
-        setIsDragOver(true)
-    }, [])
-
-    const handleDragLeave = useCallback((e: React.DragEvent) => {
-        e.preventDefault()
-        setIsDragOver(false)
-    }, [])
-
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault()
-        setIsDragOver(false)
-
-        const files = Array.from(e.dataTransfer.files).filter(file =>
-            file.type.startsWith('image/') || file.type.startsWith('video/')
-        )
-
-        if (files.length > 0) {
-            handleFiles(files)
-        }
-    }, [handleFiles])
-
-    const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-        const files = Array.from(e.target.files || [])
-        if (files.length > 0) {
-            handleFiles(files)
-        }
-    }, [handleFiles])
-
     const handleFiles = useCallback(async (files: File[]) => {
         if (!token) return
 
@@ -137,6 +107,36 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
         }
     }, [token, groupId])
 
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault()
+        setIsDragOver(true)
+    }, [])
+
+    const handleDragLeave = useCallback((e: React.DragEvent) => {
+        e.preventDefault()
+        setIsDragOver(false)
+    }, [])
+
+    const handleDrop = useCallback((e: React.DragEvent) => {
+        e.preventDefault()
+        setIsDragOver(false)
+
+        const files = Array.from(e.dataTransfer.files).filter(file =>
+            file.type.startsWith('image/') || file.type.startsWith('video/')
+        )
+
+        if (files.length > 0) {
+            handleFiles(files)
+        }
+    }, [handleFiles])
+
+    const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || [])
+        if (files.length > 0) {
+            handleFiles(files)
+        }
+    }, [handleFiles])
+
     const allCompleted = uploadingFiles.length > 0 && uploadingFiles.every(f => f.status === 'completed')
     const hasErrors = uploadingFiles.some(f => f.status === 'error')
 
@@ -164,8 +164,8 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
                 {uploadingFiles.length === 0 ? (
                     <div
                         className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${isDragOver
-                                ? 'border-blue-400 bg-blue-50'
-                                : 'border-gray-300 hover:border-gray-400'
+                            ? 'border-blue-400 bg-blue-50'
+                            : 'border-gray-300 hover:border-gray-400'
                             }`}
                         onDragOver={handleDragOver}
                         onDragLeave={handleDragLeave}
@@ -230,10 +230,10 @@ export default function UploadDropzone({ groupId, onClose, onSuccess }: UploadDr
                                         <div className="w-24 bg-gray-200 rounded-full h-2 mt-1">
                                             <div
                                                 className={`h-2 rounded-full transition-all duration-300 ${file.status === 'error'
-                                                        ? 'bg-red-500'
-                                                        : file.status === 'completed'
-                                                            ? 'bg-green-500'
-                                                            : 'bg-blue-500'
+                                                    ? 'bg-red-500'
+                                                    : file.status === 'completed'
+                                                        ? 'bg-green-500'
+                                                        : 'bg-blue-500'
                                                     }`}
                                                 style={{ width: `${file.progress}%` }}
                                             />
