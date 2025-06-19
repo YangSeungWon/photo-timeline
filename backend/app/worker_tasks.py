@@ -6,15 +6,31 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 from geoalchemy2.shape import to_shape
+import redis
+import time
 
 from .core.database import engine
 from .core.thumbs import create_thumbnail
+from .core.queues import default_queue
 from .models.photo import Photo
 from .models.meeting import Meeting
 from .models.group import Group
 from photo_core import extract_exif, cluster_photos_into_meetings
 
 logger = logging.getLogger(__name__)
+
+# Redis connection for clustering coordination
+try:
+    import os
+    redis_host = os.getenv("REDIS_HOST", "redis")
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    redis_db = int(os.getenv("REDIS_DB", 0))
+    redis_client = redis.Redis(host=redis_host, port=redis_port, db=redis_db, decode_responses=True)
+except Exception:
+    redis_client = None
+
+# Clustering delay settings
+CLUSTERING_DELAY_SECONDS = 30  # Wait 30 seconds before clustering
 
 
 def serialize_exif_data(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,9 +104,8 @@ def process_photo(photo_id: str, file_path: str) -> bool:
             if not success:
                 logger.warning(f"EXIF extraction failed for {photo_id}")
 
-            # Step 2: Trigger meeting clustering for the group
-            # This will assign the photo to a meeting based on its timestamp
-            _cluster_group_photos(session, str(photo.group_id))
+            # Step 2: Schedule delayed clustering for the group (avoid O(n²) complexity)
+            _schedule_group_clustering(str(photo.group_id))
 
             # Step 3: Generate thumbnail
             _generate_thumbnail(session, photo, file_path)
@@ -300,6 +315,93 @@ def _generate_thumbnail(session: Session, photo: Photo, file_path: Path) -> bool
 
     except Exception as e:
         logger.error(f"Thumbnail generation error for photo {photo.id}: {e}")
+        return False
+
+
+def _schedule_group_clustering(group_id: str) -> None:
+    """
+    Schedule delayed clustering for a group to avoid O(n²) complexity.
+    Uses Redis to track when the last photo was processed and delays clustering.
+    """
+    if not redis_client:
+        # Fallback to immediate clustering if Redis is not available
+        logger.warning("Redis not available, falling back to immediate clustering")
+        try:
+            with Session(engine) as session:
+                _cluster_group_photos(session, group_id)
+        except Exception as e:
+            logger.error(f"Immediate clustering failed for group {group_id}: {e}")
+        return
+
+    try:
+        # Set timestamp for when this group last had a photo processed
+        current_time = int(time.time())
+        key = f"clustering_schedule:{group_id}"
+        
+        # Set expiration time for the key (prevents memory leak)
+        redis_client.setex(key, CLUSTERING_DELAY_SECONDS + 60, current_time)
+        
+        # Schedule clustering job with delay (will be deduplicated by RQ)
+        delay_seconds = CLUSTERING_DELAY_SECONDS
+        job = default_queue.enqueue_in(
+            delay_seconds,
+            cluster_group_if_ready,
+            group_id=group_id,
+            scheduled_time=current_time,
+            job_id=f"cluster_{group_id}_{current_time}",  # Unique job ID
+            job_timeout=300,
+        )
+        
+        logger.info(f"Scheduled clustering for group {group_id} in {delay_seconds} seconds")
+        
+    except Exception as e:
+        logger.error(f"Failed to schedule clustering for group {group_id}: {e}")
+        # Fallback to immediate clustering
+        try:
+            with Session(engine) as session:
+                _cluster_group_photos(session, group_id)
+        except Exception as e2:
+            logger.error(f"Fallback clustering failed for group {group_id}: {e2}")
+
+
+def cluster_group_if_ready(group_id: str, scheduled_time: int) -> bool:
+    """
+    Execute clustering only if no newer photos have been processed since scheduling.
+    This prevents redundant clustering when multiple photos are uploaded rapidly.
+    """
+    if not redis_client:
+        logger.warning("Redis not available for clustering coordination")
+        try:
+            with Session(engine) as session:
+                return _cluster_group_photos(session, group_id)
+        except Exception as e:
+            logger.error(f"Clustering failed for group {group_id}: {e}")
+            return False
+
+    try:
+        key = f"clustering_schedule:{group_id}"
+        latest_time = redis_client.get(key)
+        
+        if latest_time is None:
+            logger.info(f"No pending photos for group {group_id}, skipping clustering")
+            return True
+            
+        latest_time = int(latest_time)
+        
+        # Only cluster if this is the most recent scheduling
+        if latest_time <= scheduled_time:
+            logger.info(f"Executing clustering for group {group_id}")
+            # Clear the scheduling key to prevent duplicate clustering
+            redis_client.delete(key)
+            
+            with Session(engine) as session:
+                return _cluster_group_photos(session, group_id)
+        else:
+            logger.info(f"Skipping clustering for group {group_id} - newer photos detected")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error in cluster_group_if_ready for group {group_id}: {e}")
         return False
 
 
