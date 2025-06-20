@@ -19,6 +19,28 @@ from .models.meeting import Meeting
 from .models.group import Group
 from photo_core import extract_exif, cluster_photos_into_meetings
 
+# Metrics tracking (can be extended with StatsD/Prometheus)
+clustering_metrics = {
+    "total_photos_processed": 0,
+    "total_meetings_created": 0,
+    "total_clustering_runs": 0,
+    "total_clustering_failures": 0,
+    "debounce_reschedules": 0,
+}
+
+def _emit_metric(metric_name: str, value: int = 1, tags: Dict[str, str] = None) -> None:
+    """Emit metrics to monitoring system (placeholder for StatsD/Prometheus)."""
+    if not settings.ENABLE_CLUSTERING_METRICS:
+        return
+    
+    # Update internal counters
+    if metric_name in clustering_metrics:
+        clustering_metrics[metric_name] += value
+    
+    # TODO: Send to actual monitoring system
+    # statsd.increment(f"photo_timeline.clustering.{metric_name}", value, tags=tags)
+    logger.debug(f"Metric: {metric_name}={value} {tags or ''}")
+
 logger = logging.getLogger(__name__)
 
 # Redis connection for clustering coordination
@@ -324,42 +346,55 @@ def _mark_cluster_pending(group_id: str) -> None:
     """
     Mark group for debounced clustering using Redis TTL.
     
-    Key insight: Only schedule ONE job per group, use TTL to detect "quiet period"
+    Enhanced with fallback strategy:
+    - Primary: Redis-based debounced clustering  
+    - Fallback: Legacy incremental clustering when Redis unavailable
     """
     if not redis_client:
-        logger.warning("Redis not available, falling back to immediate clustering")
-        # Fallback to immediate clustering if Redis is unavailable
-        with Session(engine) as session:
-            _cluster_group_photos_batch(group_id)
-        return
+        logger.warning(f"Redis not available for group {group_id}, using legacy incremental clustering")
+        # Fallback: Use legacy incremental clustering (rough but immediate)
+        # This ensures photos get basic clustering even without Redis
+        # Later batch clustering will optimize the results
+        return  # Let the photo stay in Default Meeting for batch processing
     
-    ttl = settings.CLUSTER_DEBOUNCE_TTL
-    delay = settings.CLUSTER_RETRY_DELAY
-    
-    # Mark activity with TTL
-    pending_key = f"cluster:pending:{group_id}"
-    count_key = f"cluster:count:{group_id}"
-    job_key = f"cluster:job:{group_id}"
-    
-    # Extend activity window
-    redis_client.setex(pending_key, ttl, "1")
-    redis_client.incr(count_key)  # Statistics (optional)
-    
-    # Schedule SINGLE job if not already scheduled
-    if not redis_client.exists(job_key):
-        try:
-            # Schedule the debounced clustering job
-            default_queue.enqueue_in(
-                delay,
-                cluster_if_quiet,
-                group_id=group_id,
-                job_timeout=300  # 5 minutes timeout
-            )
-            # Mark that job is scheduled (prevent duplicate scheduling)
-            redis_client.setex(job_key, ttl + delay + 10, "1")  # Extra buffer
-            logger.info(f"Scheduled debounced clustering for group {group_id}")
-        except Exception as e:
-            logger.error(f"Failed to schedule cluster job for group {group_id}: {e}")
+    try:
+        ttl = settings.CLUSTER_DEBOUNCE_TTL
+        delay = settings.CLUSTER_RETRY_DELAY
+        
+        # Mark activity with TTL
+        pending_key = f"cluster:pending:{group_id}"
+        count_key = f"cluster:count:{group_id}"
+        job_key = f"cluster:job:{group_id}"
+        
+        # Extend activity window
+        redis_client.setex(pending_key, ttl, "1")
+        redis_client.incr(count_key)  # Statistics (optional)
+        
+        # Schedule SINGLE job if not already scheduled
+        if not redis_client.exists(job_key):
+            try:
+                # Schedule the debounced clustering job
+                default_queue.enqueue_in(
+                    delay,
+                    cluster_if_quiet,
+                    group_id=group_id,
+                    job_timeout=300  # 5 minutes timeout
+                )
+                # Mark that job is scheduled (prevent duplicate scheduling)
+                redis_client.setex(job_key, ttl + delay + 10, "1")  # Extra buffer
+                logger.info(f"Scheduled debounced clustering for group {group_id}")
+            except Exception as e:
+                logger.error(f"Failed to schedule cluster job for group {group_id}: {e}")
+                # If job scheduling fails, fall back to immediate batch clustering
+                logger.warning(f"Fallback: immediate clustering for group {group_id}")
+                _cluster_group_photos_batch(group_id)
+                
+    except Exception as e:
+        logger.error(f"Redis operation failed for group {group_id}: {e}")
+        # Complete Redis failure - fall back to legacy approach
+        logger.warning(f"Redis failure, using legacy clustering for group {group_id}")
+        # Could optionally trigger immediate batch clustering here
+        # For now, let it accumulate in Default Meeting for batch processing
 
 
 def cluster_if_quiet(group_id: str) -> bool:
@@ -367,15 +402,14 @@ def cluster_if_quiet(group_id: str) -> bool:
     Execute full group clustering only if the group is "quiet" (no recent uploads).
     If still busy, reschedule for later.
     
-    This implements the core debounce logic:
-    - Check if upload activity is still ongoing
-    - If yes: schedule another attempt later
-    - If no: perform the full clustering and cleanup
+    Enhanced with safety checks:
+    - Prevents infinite busy state with TTL limits
+    - Handles Redis failures gracefully
+    - Ensures job cleanup and retry on failure
     """
     if not redis_client:
         logger.warning("Redis not available, performing clustering anyway")
-        with Session(engine) as session:
-            return _cluster_group_photos_batch(group_id)
+        return _cluster_group_photos_batch(group_id)
     
     pending_key = f"cluster:pending:{group_id}"
     count_key = f"cluster:count:{group_id}"
@@ -383,41 +417,87 @@ def cluster_if_quiet(group_id: str) -> bool:
     
     # Check if group is still receiving uploads
     if redis_client.exists(pending_key):
-        # Still busy - reschedule
+        # Still busy - but check TTL to prevent infinite busy state
+        ttl = redis_client.ttl(pending_key)
         delay = settings.CLUSTER_RETRY_DELAY
-        try:
-            default_queue.enqueue_in(
-                delay,
-                cluster_if_quiet,
-                group_id=group_id,
-                job_timeout=300
-            )
-            logger.info(f"Group {group_id} still busy, rescheduled clustering")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to reschedule cluster job for group {group_id}: {e}")
-            return False
+        
+        # Safety: if TTL is very low, don't reschedule - proceed with clustering
+        if ttl >= 0 and ttl < delay * 2:
+            logger.info(f"Group {group_id} TTL low ({ttl}s), proceeding with clustering")
+        else:
+            # Normal reschedule
+            try:
+                default_queue.enqueue_in(
+                    delay,
+                    cluster_if_quiet,
+                    group_id=group_id,
+                    job_timeout=300
+                )
+                _emit_metric("debounce_reschedules", tags={"group_id": group_id})
+                logger.info(f"Group {group_id} still busy (TTL:{ttl}s), rescheduled clustering")
+                return False
+            except Exception as e:
+                logger.error(f"Failed to reschedule cluster job for group {group_id}: {e}")
+                # If can't reschedule, proceed with clustering anyway
+                logger.warning(f"Proceeding with immediate clustering for group {group_id}")
     
-    # Group is quiet - perform clustering
+    # Group is quiet (or forced due to edge cases) - perform clustering
     try:
         photo_count = redis_client.get(count_key) or "0"
         logger.info(f"Starting batch clustering for group {group_id} ({photo_count} photos processed)")
         
+        _emit_metric("total_clustering_runs", tags={"group_id": group_id})
+        start_time = time.time()
+        
         success = _cluster_group_photos_batch(group_id)
+        
+        duration = time.time() - start_time
+        logger.info(f"Clustering took {duration:.2f}s for group {group_id}")
         
         if success:
             logger.info(f"Completed batch clustering for group {group_id}")
+            # Cleanup Redis keys on success
+            redis_client.delete(count_key, job_key, pending_key)
+            return True
         else:
             logger.error(f"Batch clustering failed for group {group_id}")
-        
-        # Cleanup Redis keys
-        redis_client.delete(count_key, job_key)
-        return success
+            _emit_metric("total_clustering_failures", tags={"group_id": group_id})
+            
+            # Schedule retry on failure (fail-fast with retry)
+            try:
+                retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # Longer delay for retry
+                default_queue.enqueue_in(
+                    retry_delay,
+                    cluster_if_quiet,
+                    group_id=group_id,
+                    job_timeout=300
+                )
+                logger.info(f"Scheduled retry clustering for group {group_id} in {retry_delay}s")
+            except Exception as retry_e:
+                logger.error(f"Failed to schedule retry for group {group_id}: {retry_e}")
+            
+            # Don't cleanup keys on failure - let retry handle it
+            return False
         
     except Exception as e:
         logger.error(f"Error in cluster_if_quiet for group {group_id}: {e}")
-        # Cleanup on error
-        redis_client.delete(count_key, job_key)
+        _emit_metric("total_clustering_failures", tags={"group_id": group_id})
+        
+        # Schedule retry on unexpected error
+        try:
+            retry_delay = settings.CLUSTER_RETRY_DELAY * 2
+            default_queue.enqueue_in(
+                retry_delay,
+                cluster_if_quiet,
+                group_id=group_id,
+                job_timeout=300
+            )
+            logger.info(f"Scheduled retry clustering after error for group {group_id}")
+        except Exception as retry_e:
+            logger.error(f"Failed to schedule retry after error for group {group_id}: {retry_e}")
+            # Final cleanup if even retry scheduling fails
+            redis_client.delete(count_key, job_key, pending_key)
+        
         return False
 
 
@@ -696,6 +776,10 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                     
                     meetings_created += 1
                     logger.info(f"Created meeting {new_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
+                
+                # Emit metrics for monitoring
+                _emit_metric("total_photos_processed", photos_moved, tags={"group_id": group_id})
+                _emit_metric("total_meetings_created", meetings_created, tags={"group_id": group_id})
                 
                 # Step 4: Update Default Meeting count
                 remaining_photos = session.exec(

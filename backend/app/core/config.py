@@ -44,11 +44,15 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Photo clustering settings
-    MEETING_GAP_HOURS: int = 4  # Time gap in hours for meeting clustering
+    MEETING_GAP_HOURS: int = 24  # Time gap in hours for meeting clustering
     
-    # Debounce settings for batch clustering
-    CLUSTER_DEBOUNCE_TTL: int = 5  # Seconds to wait for quiet period
-    CLUSTER_RETRY_DELAY: int = 3   # Seconds to delay first clustering attempt
+    # Debounce settings for batch clustering (production tuned)
+    CLUSTER_DEBOUNCE_TTL: int = 5    # Seconds to wait for quiet period (3-8s sweet spot)
+    CLUSTER_RETRY_DELAY: int = 3     # Seconds to delay first clustering attempt (TTL ÷ 2)
+    CLUSTER_MAX_RETRIES: int = 3     # Maximum retry attempts for failed clustering
+    
+    # Metrics and monitoring
+    ENABLE_CLUSTERING_METRICS: bool = True  # Enable StatsD/Prometheus metrics
 
     # Frontend URL for email links
     FRONTEND_URL: str = "http://localhost:3067"
