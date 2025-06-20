@@ -11,6 +11,7 @@ from ..models.group import Group
 from ..models.meeting import Meeting
 from ..models.membership import Membership, MembershipStatus
 from ..schemas.meeting import MeetingResponse, MeetingCreate
+from ..worker_tasks import cleanup_empty_meetings
 
 router = APIRouter()
 
@@ -138,4 +139,52 @@ async def create_meeting(
     db.commit()
     db.refresh(meeting)
 
-    return meeting 
+    return meeting
+
+
+@router.post("/cleanup-empty/{group_id}")
+async def cleanup_empty_meetings_in_group(
+    group_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Clean up empty meetings in a group (admin action)."""
+    # Verify group access
+    group = db.exec(select(Group).where(Group.id == group_id)).first()
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Group not found"
+        )
+
+    # Check if user is admin of the group
+    membership = db.exec(
+        select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.group_id == group_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
+
+    # For now, any group member can cleanup empty meetings
+    # TODO: Add role-based permissions if needed
+    
+    try:
+        deleted_count = cleanup_empty_meetings(db, str(group_id))
+        db.commit()
+        
+        return {
+            "message": f"Successfully cleaned up {deleted_count} empty meetings",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cleanup empty meetings: {str(e)}"
+        ) 

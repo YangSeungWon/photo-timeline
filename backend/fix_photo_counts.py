@@ -101,12 +101,20 @@ def fix_photo_counts(dry_run: bool = False, remove_empty: bool = False) -> dict:
             
             stats["after_sum"] += actual_count
         
-        # Remove empty meetings if requested
+        # Remove empty meetings if requested  
         if remove_empty and not dry_run:
             for meeting in empty_meetings_to_remove:
-                session.delete(meeting)
-                stats["removed_meetings"] += 1
-                print(f"❌ Removed empty meeting: {meeting.title}")
+                # Double-check with actual photo count before deletion
+                double_check_count = session.exec(
+                    select(func.count(Photo.id)).where(Photo.meeting_id == meeting.id)
+                ).first() or 0
+                
+                if double_check_count == 0:
+                    session.delete(meeting)
+                    stats["removed_meetings"] += 1
+                    print(f"❌ Removed empty meeting: {meeting.title}")
+                else:
+                    print(f"⚠️  Skipped '{meeting.title}': has {double_check_count} actual photos")
         
         # Commit changes
         if not dry_run:

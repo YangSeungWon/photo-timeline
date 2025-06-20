@@ -91,6 +91,51 @@ def recount_all_meetings_in_group(session: Session, group_id: str) -> Dict[str, 
         logger.error(f"Failed to recount meetings in group {group_id}: {e}")
         return {}
 
+def cleanup_empty_meetings(session: Session, group_id: str) -> int:
+    """
+    Remove empty meetings (except Default Meeting) from a group.
+    Should be called after clustering to clean up orphaned meetings.
+    
+    Args:
+        session: Database session
+        group_id: UUID of the group
+        
+    Returns:
+        Number of meetings deleted
+    """
+    try:
+        # Find meetings with zero photos (excluding Default Meeting)
+        empty_meetings = session.exec(
+            select(Meeting).where(
+                Meeting.group_id == group_id,
+                Meeting.title != "Default Meeting",
+                Meeting.photo_count == 0
+            )
+        ).all()
+        
+        deleted_count = 0
+        for meeting in empty_meetings:
+            # Double-check by counting actual photos (safety check)
+            actual_photo_count = session.exec(
+                select(func.count(Photo.id)).where(Photo.meeting_id == meeting.id)
+            ).first() or 0
+            
+            if actual_photo_count == 0:
+                logger.info(f"Deleting empty meeting: '{meeting.title}' (ID: {meeting.id})")
+                session.delete(meeting)
+                deleted_count += 1
+            else:
+                logger.warning(f"Meeting '{meeting.title}' has photo_count=0 but {actual_photo_count} actual photos")
+        
+        if deleted_count > 0:
+            logger.info(f"Cleaned up {deleted_count} empty meetings in group {group_id}")
+        
+        return deleted_count
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup empty meetings in group {group_id}: {e}")
+        return 0
+
 def _emit_metric(metric_name: str, value: int = 1, tags: Dict[str, str] = None) -> None:
     """Emit metrics to monitoring system (placeholder for StatsD/Prometheus)."""
     if not settings.ENABLE_CLUSTERING_METRICS:
@@ -942,6 +987,11 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             # This eliminates all photo_count inconsistencies
             recount_results = recount_all_meetings_in_group(session, group_id)
             logger.info(f"Recounted photo_count for group {group_id}: {recount_results}")
+            
+            # Step 5: Clean up empty meetings (auto-cleanup after clustering)
+            deleted_meetings = cleanup_empty_meetings(session, group_id)
+            if deleted_meetings > 0:
+                _emit_metric("meetings_cleaned_up", deleted_meetings, tags={"group_id": group_id})
             
             # Commit all changes
             session.commit()
