@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     AUTO_CREATE_TABLES: bool = True
 
     # JWT Authentication - 보안상 중요한 설정
-    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
+    SECRET_KEY: str = os.getenv("SECRET_KEY", Field(default_factory=lambda: secrets.token_urlsafe(32)))
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Photo clustering settings
-    MEETING_GAP_HOURS: int = 24  # Time gap in hours for meeting clustering
+    MEETING_GAP_HOURS: int = 18  # Time gap in hours for meeting clustering
     
     # Debounce settings for batch clustering (production tuned)
     CLUSTER_DEBOUNCE_TTL: int = 5    # Seconds to wait for quiet period (3-8s sweet spot)

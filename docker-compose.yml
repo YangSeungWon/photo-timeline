@@ -10,6 +10,8 @@ services:
       - ./backend:/app
       # This will be the main storage for original photos and thumbnails
       - storage_data:/srv/photo-timeline/storage
+    ports:
+      - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://user:password@postgres/phototimeline
       - REDIS_URL=redis://redis:6379
@@ -87,6 +89,8 @@ services:
       - POSTGRES_DB=phototimeline
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d phototimeline"]
       interval: 2s
@@ -97,6 +101,8 @@ services:
   # --- Cache (Redis) ---
   redis:
     image: redis:7-alpine
+    ports:
+      - "16379:6379"
 
   # --- Web Server (Nginx) ---
   nginx:
