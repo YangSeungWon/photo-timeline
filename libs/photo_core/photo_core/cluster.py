@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MEETING_GAP_HOURS = 12
+DEFAULT_MEETING_GAP_HOURS = 18
 
 
 def cluster_photos_into_meetings(

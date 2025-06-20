@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from sqlmodel import Session, select
 from sqlalchemy import text
 from geoalchemy2.shape import to_shape
+from geoalchemy2 import WKTElement
 import redis
 import time
 
@@ -175,10 +176,9 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
             logger.info(f"Found GPS coordinates for photo {photo.id}: lat={lat}, lon={lon}")
             
             if lat is not None and lon is not None:
-                # Convert to PostGIS format (longitude first, then latitude)
-                point_wkt = f"POINT({lon} {lat})"
-                photo.point_gps = point_wkt
-                logger.info(f"Set point_gps for photo {photo.id}: {point_wkt}")
+                # PostGIS Geometry (srid = 4326) 로 저장해야 to_shape() 가 동작
+                photo.point_gps = WKTElement(f"POINT({lon} {lat})", srid=4326)
+                logger.info(f"Set point_gps for photo {photo.id}: POINT({lon} {lat}) with SRID 4326")
             else:
                 logger.warning(f"GPS coordinates are None for photo {photo.id}")
         else:
@@ -831,38 +831,51 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             for meeting_date, photos_for_date in clustered_by_date.items():
                 if not photos_for_date:
                     continue
-                
-                # Calculate time range for this cluster
+
+                # ── ① 이미 같은 date/title 이 존재하면 가져옴 ───────────────────
+                existing = session.exec(
+                    select(Meeting).where(
+                        Meeting.group_id == group_id,
+                        Meeting.title == f"Meeting {meeting_date}"
+                    ).limit(1)
+                ).first()
+
                 times = [p["DateTimeOriginal"] for p in photos_for_date]
-                start_time = min(times)
-                end_time = max(times)
-                
-                # Create new meeting
-                new_meeting = Meeting(
-                    group_id=group_id,
-                    title=f"Meeting {meeting_date}",
-                    description=f"Auto-clustered meeting for {len(photos_for_date)} photos",
-                    start_time=start_time,
-                    end_time=end_time,
-                    meeting_date=meeting_date,
-                    photo_count=len(photos_for_date),
-                    participant_count=0,
-                    created_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow(),
-                )
-                session.add(new_meeting)
-                session.flush()  # Get ID
+                start_time, end_time = min(times), max(times)
+
+                if existing:          # ▷ UPDATE / MERGE
+                    existing.start_time = min(existing.start_time, start_time)
+                    existing.end_time   = max(existing.end_time,   end_time)
+                    existing.photo_count += len(photos_for_date)
+                    existing.updated_at  = datetime.utcnow()
+                    target_meeting = existing
+                    session.add(existing)
+                    logger.info(f"Updated existing meeting {existing.id} with {len(photos_for_date)} more photos on {meeting_date}")
+                else:                 # ▷ 새로 INSERT
+                    target_meeting = Meeting(
+                        group_id=group_id,
+                        title=f"Meeting {meeting_date}",
+                        description=f"Auto-clustered meeting for {len(photos_for_date)} photos",
+                        start_time=start_time,
+                        end_time=end_time,
+                        meeting_date=meeting_date,
+                        photo_count=len(photos_for_date),
+                        participant_count=0,
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow(),
+                    )
+                    session.add(target_meeting)
+                    session.flush()  # Get ID
+                    meetings_created += 1
+                    logger.info(f"Created new meeting {target_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
                 
                 # Move photos to this meeting
                 for photo_data in photos_for_date:
                     photo = session.get(Photo, photo_data["id"])
                     if photo:
-                        photo.meeting_id = new_meeting.id
+                        photo.meeting_id = target_meeting.id
                         session.add(photo)
                         photos_moved += 1
-                
-                meetings_created += 1
-                logger.info(f"Created meeting {new_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
             
             # Emit metrics for monitoring
             _emit_metric("total_photos_processed", photos_moved, tags={"group_id": group_id})
