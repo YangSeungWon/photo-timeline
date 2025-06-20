@@ -73,46 +73,23 @@ class PhotoResponse(BaseModel):
 
     @classmethod
     def from_photo_model(cls, photo):
-        """Create PhotoResponse from Photo model, handling PostGIS conversion."""
-        # Start with basic fields
-        data = {
-            'id': photo.id,
-            'group_id': photo.group_id,
-            'uploader_id': photo.uploader_id,
-            'meeting_id': photo.meeting_id,
-            'filename_orig': photo.filename_orig,
-            'filename_thumb': photo.filename_thumb,
-            'filename_medium': photo.filename_medium,
-            'file_size': photo.file_size,
-            'file_hash': photo.file_hash,
-            'mime_type': photo.mime_type,
-            'shot_at': photo.shot_at,
-            'camera_make': photo.camera_make,
-            'camera_model': photo.camera_model,
-            'lens_model': photo.lens_model,
-            'width': photo.width,
-            'height': photo.height,
-            'orientation': photo.orientation,
-            'aperture': photo.aperture,
-            'shutter_speed': photo.shutter_speed,
-            'iso': photo.iso,
-            'focal_length': photo.focal_length,
-            'flash': photo.flash,
-            'gps_altitude': photo.gps_altitude,
-            'gps_accuracy': photo.gps_accuracy,
-            'exif_data': photo.exif_data,
-            'caption': photo.caption,
-            'tags': photo.tags,
-            'is_processed': photo.is_processed,
-            'processing_error': photo.processing_error,
-            'uploaded_at': photo.uploaded_at,
-            'updated_at': photo.updated_at,
-            'is_public': photo.is_public,
-            'is_flagged': photo.is_flagged,
-            'flagged_reason': photo.flagged_reason,
-        }
+        """Convert Photo model to PhotoResponse with GPS coordinate handling."""
+        # Convert all basic fields from the Photo model
+        data = {}
+        for field_name in cls.__fields__.keys():
+            if hasattr(photo, field_name):
+                value = getattr(photo, field_name)
+                # Convert UUID to string for JSON serialization
+                if hasattr(value, 'hex'):  # UUID check
+                    data[field_name] = str(value)
+                else:
+                    data[field_name] = value
         
         # Handle PostGIS point_gps field for GPS coordinates
+        logger.info(f"Processing GPS data for photo {photo.id}")
+        logger.info(f"Raw point_gps: {photo.point_gps}")
+        logger.info(f"Has point_gps attr: {hasattr(photo, 'point_gps')}")
+        
         if hasattr(photo, 'point_gps') and photo.point_gps:
             try:
                 # Use geoalchemy2.shape.to_shape() for clean WKBElement → shapely Point conversion
@@ -123,6 +100,8 @@ class PhotoResponse(BaseModel):
                 data['gps_latitude'] = float(point.y)   # lat
                 data['gps_longitude'] = float(point.x)  # lng
                 
+                logger.info(f"Successfully parsed GPS for photo {photo.id}: lat={point.y}, lng={point.x}")
+                
                 # Create GeoJSON format for frontend (not WKT)
                 geojson = {
                     "type": "Point",
@@ -130,11 +109,14 @@ class PhotoResponse(BaseModel):
                 }
                 data['point_gps'] = json.dumps(geojson)  # JSON string for frontend
                 
+                logger.info(f"Generated GeoJSON for photo {photo.id}: {data['point_gps']}")
+                
             except Exception as e:
                 logger.warning(f"Failed to parse GPS coordinates using to_shape for photo {photo.id}: {e}")
                 # Fallback to string conversion
                 try:
                     point_str = str(photo.point_gps)
+                    logger.info(f"Trying fallback string parsing for photo {photo.id}: {point_str}")
                     
                     if point_str and point_str.startswith('POINT('):
                         # Parse WKT format: "POINT(longitude latitude)"
@@ -146,6 +128,8 @@ class PhotoResponse(BaseModel):
                             data['gps_longitude'] = lng
                             data['gps_latitude'] = lat
                             
+                            logger.info(f"Fallback parsing successful for photo {photo.id}: lat={lat}, lng={lng}")
+                            
                             # Create GeoJSON fallback
                             geojson = {
                                 "type": "Point", 
@@ -153,10 +137,12 @@ class PhotoResponse(BaseModel):
                             }
                             data['point_gps'] = json.dumps(geojson)
                         else:
+                            logger.warning(f"Invalid coordinate format for photo {photo.id}: {coords}")
                             data['gps_latitude'] = None
                             data['gps_longitude'] = None
                             data['point_gps'] = None
                     else:
+                        logger.warning(f"Invalid WKT format for photo {photo.id}: {point_str}")
                         data['gps_latitude'] = None
                         data['gps_longitude'] = None
                         data['point_gps'] = None
@@ -166,6 +152,7 @@ class PhotoResponse(BaseModel):
                     data['gps_latitude'] = None
                     data['gps_longitude'] = None
         else:
+            logger.info(f"No GPS data available for photo {photo.id}")
             data['point_gps'] = None
             data['gps_latitude'] = None
             data['gps_longitude'] = None

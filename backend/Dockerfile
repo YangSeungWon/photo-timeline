@@ -1,10 +1,13 @@
 FROM python:3.12-slim
 
-# Install system dependencies
+# Install system dependencies including GPS processing tools
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
     curl \
+    exiftool \
+    libimage-exiftool-perl \
+    libheif1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

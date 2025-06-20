@@ -20,8 +20,9 @@ email-validator==2.2.0
 redis==5.0.1
 rq==1.15.1
 
-# Image processing
+# Image processing & GPS EXIF
 Pillow==10.1.0
+piexif>=1.1.3
 
 # Email
 fastapi-mail==1.4.1

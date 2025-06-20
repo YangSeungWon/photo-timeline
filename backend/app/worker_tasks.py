@@ -154,7 +154,10 @@ def process_photo(photo_id: str, file_path: str) -> bool:
 def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
     """Extract EXIF data and update photo record."""
     try:
+        logger.info(f"Starting EXIF extraction for photo {photo.id}, file: {file_path}")
         metadata = extract_exif(file_path)
+        
+        logger.info(f"Raw EXIF metadata for photo {photo.id}: {metadata}")
 
         # Serialize EXIF data for JSON storage
         serialized_metadata = serialize_exif_data(metadata)
@@ -163,14 +166,23 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
         # Set taken_at from EXIF datetime
         if "DateTimeOriginal" in metadata:
             photo.shot_at = metadata["DateTimeOriginal"]
+            logger.info(f"Set shot_at for photo {photo.id}: {photo.shot_at}")
 
         # Set GPS location if available
         if "GPSLat" in metadata and "GPSLong" in metadata:
             lat = metadata["GPSLat"]
             lon = metadata["GPSLong"]
+            logger.info(f"Found GPS coordinates for photo {photo.id}: lat={lat}, lon={lon}")
+            
             if lat is not None and lon is not None:
                 # Convert to PostGIS format (longitude first, then latitude)
-                photo.point_gps = f"POINT({lon} {lat})"
+                point_wkt = f"POINT({lon} {lat})"
+                photo.point_gps = point_wkt
+                logger.info(f"Set point_gps for photo {photo.id}: {point_wkt}")
+            else:
+                logger.warning(f"GPS coordinates are None for photo {photo.id}")
+        else:
+            logger.info(f"No GPS coordinates found in EXIF for photo {photo.id}")
 
         session.add(photo)
         logger.info(f"Extracted EXIF data for photo {photo.id}")
@@ -741,7 +753,7 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
     """
     try:
         # Create separate session to avoid transaction conflicts
-        from ..core.database import engine
+        from app.core.database import engine
         session = Session(engine, autocommit=False, autoflush=False)
         
         try:
@@ -791,11 +803,12 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             ).all()
             
             # Actually, let's be more careful - only delete empty meetings
+            from sqlalchemy import func
             empty_meetings = []
             for meeting in auto_meetings:
                 photo_count = session.exec(
-                    select(Photo).where(Photo.meeting_id == meeting.id)
-                ).count()
+                    select(func.count(Photo.id)).where(Photo.meeting_id == meeting.id)
+                ).first() or 0
                 if photo_count == 0:
                     empty_meetings.append(meeting)
             

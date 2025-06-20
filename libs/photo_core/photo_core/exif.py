@@ -1,18 +1,40 @@
 import json
 import logging
 import subprocess
+import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import piexif
-from PIL import Image
+try:
+    import piexif
+    PIEXIF_AVAILABLE = True
+except ImportError:
+    piexif = None
+    PIEXIF_AVAILABLE = False
+    
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = None
+    PIL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".tiff", ".png"}
 SUPPORTED_VIDEO_EXTENSIONS = {".mov", ".mp4"}
 SUPPORTED_HEIC_EXTENSIONS = {".heic", ".heif"}
+
+# Check exiftool availability once at module load
+EXIFTOOL_AVAILABLE = shutil.which("exiftool") is not None
+
+if not PIEXIF_AVAILABLE:
+    logger.warning("piexif not installed – JPEG EXIF extraction disabled")
+if not PIL_AVAILABLE:
+    logger.warning("PIL/Pillow not installed – image processing disabled")
+if not EXIFTOOL_AVAILABLE:
+    logger.warning("exiftool not found in PATH – video/HEIC metadata disabled")
 
 
 def _convert_gps_to_decimal(
@@ -42,6 +64,11 @@ def _convert_gps_to_decimal(
 def _extract_video_metadata(file_path: Path) -> Dict[str, Any]:
     """Extracts metadata from video files using exiftool."""
     result = {"DateTimeOriginal": None, "GPSLat": None, "GPSLong": None}
+    
+    if not EXIFTOOL_AVAILABLE:
+        logger.debug(f"exiftool not available, skipping video metadata for {file_path.name}")
+        return result
+        
     try:
         cmd = ["exiftool", "-j", "-n", str(file_path)]
         output = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -73,6 +100,11 @@ def _extract_video_metadata(file_path: Path) -> Dict[str, Any]:
 def _extract_heic_metadata(file_path: Path) -> Dict[str, Any]:
     """Extracts metadata from HEIC files using exiftool."""
     result = {"DateTimeOriginal": None, "GPSLat": None, "GPSLong": None}
+    
+    if not EXIFTOOL_AVAILABLE:
+        logger.debug(f"exiftool not available, skipping HEIC metadata for {file_path.name}")
+        return result
+        
     try:
         cmd = ["exiftool", "-j", "-n", str(file_path)]
         output = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -123,6 +155,9 @@ def extract_exif(file_path: Path) -> Dict[str, Any]:
 
     try:
         if suffix in SUPPORTED_IMAGE_EXTENSIONS:
+            if not PIEXIF_AVAILABLE:
+                logger.debug(f"piexif not available, skipping EXIF for {file_path.name}")
+                return result
             exif_dict = piexif.load(str(file_path))
 
             # Date/Time
