@@ -85,7 +85,15 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    command: ["rq", "worker", "cluster", "--url", "redis://redis:6379/0"]
+    command:
+      [
+        "rq",
+        "worker",
+        "cluster",
+        "--with-scheduler",
+        "--url",
+        "redis://redis:6379/0",
+      ]
     restart: on-failure
     volumes:
       - ./backend:/app

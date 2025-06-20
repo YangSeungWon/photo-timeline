@@ -211,7 +211,7 @@ get_clustering_config() {
     echo "════════════════════════════════════════"
     
     # Try to get config from environment or defaults
-    local meeting_gap=${MEETING_GAP_HOURS:-24}
+    local meeting_gap=${MEETING_GAP_HOURS:-12}
     local debounce_ttl=${CLUSTER_DEBOUNCE_TTL:-5}
     local retry_delay=${CLUSTER_RETRY_DELAY:-3}
     local max_retries=${CLUSTER_MAX_RETRIES:-2}

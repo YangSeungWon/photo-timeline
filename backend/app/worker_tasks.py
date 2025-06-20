@@ -741,7 +741,10 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
     """
     try:
         # Create separate session to avoid transaction conflicts
-        with Session(engine) as session:
+        from ..core.database import engine
+        session = Session(engine, autocommit=False, autoflush=False)
+        
+        try:
             logger.info(f"Starting batch clustering for group {group_id}")
             
             # Get all photos with timestamps
@@ -768,108 +771,114 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             # Use photo_core clustering algorithm
             clustered_photos = cluster_photos_into_meetings(photo_dicts)
             
-            # Start transaction for atomic update
-            with session.begin():
-                # Step 1: Move all timestamped photos to Default Meeting temporarily
-                # This ensures clean state before reassignment
-                default_meeting = _get_or_create_default_meeting(session, group_id)
+            # Step 1: Move all timestamped photos to Default Meeting temporarily
+            # This ensures clean state before reassignment
+            default_meeting = _get_or_create_default_meeting(session, group_id)
+            
+            for photo in photos_with_timestamps:
+                if photo.meeting_id != default_meeting.id:
+                    photo.meeting_id = default_meeting.id
+                    session.add(photo)
+            
+            # Step 2: Delete all auto-generated meetings (keep manual ones)
+            auto_meetings = session.exec(
+                select(Meeting).where(
+                    Meeting.group_id == group_id,
+                    Meeting.title != "Default Meeting",
+                    # Add more conditions if needed to identify auto-generated meetings
+                    # For now, we'll be conservative and keep all non-default meetings
+                )
+            ).all()
+            
+            # Actually, let's be more careful - only delete empty meetings
+            empty_meetings = []
+            for meeting in auto_meetings:
+                photo_count = session.exec(
+                    select(Photo).where(Photo.meeting_id == meeting.id)
+                ).count()
+                if photo_count == 0:
+                    empty_meetings.append(meeting)
+            
+            for meeting in empty_meetings:
+                session.delete(meeting)
+                logger.info(f"Deleted empty meeting {meeting.id}")
+            
+            # Step 3: Create new meetings from clustered data
+            clustered_by_date = {}
+            for clustered_photo in clustered_photos:
+                meeting_date = clustered_photo.get("meeting_date")
+                if meeting_date:
+                    if meeting_date not in clustered_by_date:
+                        clustered_by_date[meeting_date] = []
+                    clustered_by_date[meeting_date].append(clustered_photo)
+            
+            meetings_created = 0
+            photos_moved = 0
+            
+            for meeting_date, photos_for_date in clustered_by_date.items():
+                if not photos_for_date:
+                    continue
                 
-                for photo in photos_with_timestamps:
-                    if photo.meeting_id != default_meeting.id:
-                        photo.meeting_id = default_meeting.id
+                # Calculate time range for this cluster
+                times = [p["DateTimeOriginal"] for p in photos_for_date]
+                start_time = min(times)
+                end_time = max(times)
+                
+                # Create new meeting
+                new_meeting = Meeting(
+                    group_id=group_id,
+                    title=f"Meeting {meeting_date}",
+                    description=f"Auto-clustered meeting for {len(photos_for_date)} photos",
+                    start_time=start_time,
+                    end_time=end_time,
+                    meeting_date=meeting_date,
+                    photo_count=len(photos_for_date),
+                    participant_count=0,
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+                session.add(new_meeting)
+                session.flush()  # Get ID
+                
+                # Move photos to this meeting
+                for photo_data in photos_for_date:
+                    photo = session.get(Photo, photo_data["id"])
+                    if photo:
+                        photo.meeting_id = new_meeting.id
                         session.add(photo)
+                        photos_moved += 1
                 
-                # Step 2: Delete all auto-generated meetings (keep manual ones)
-                auto_meetings = session.exec(
-                    select(Meeting).where(
-                        Meeting.group_id == group_id,
-                        Meeting.title != "Default Meeting",
-                        # Add more conditions if needed to identify auto-generated meetings
-                        # For now, we'll be conservative and keep all non-default meetings
-                    )
-                ).all()
-                
-                # Actually, let's be more careful - only delete empty meetings
-                empty_meetings = []
-                for meeting in auto_meetings:
-                    photo_count = session.exec(
-                        select(Photo).where(Photo.meeting_id == meeting.id)
-                    ).count()
-                    if photo_count == 0:
-                        empty_meetings.append(meeting)
-                
-                for meeting in empty_meetings:
-                    session.delete(meeting)
-                    logger.info(f"Deleted empty meeting {meeting.id}")
-                
-                # Step 3: Create new meetings from clustered data
-                clustered_by_date = {}
-                for clustered_photo in clustered_photos:
-                    meeting_date = clustered_photo.get("meeting_date")
-                    if meeting_date:
-                        if meeting_date not in clustered_by_date:
-                            clustered_by_date[meeting_date] = []
-                        clustered_by_date[meeting_date].append(clustered_photo)
-                
-                meetings_created = 0
-                photos_moved = 0
-                
-                for meeting_date, photos_for_date in clustered_by_date.items():
-                    if not photos_for_date:
-                        continue
-                    
-                    # Calculate time range for this cluster
-                    times = [p["DateTimeOriginal"] for p in photos_for_date]
-                    start_time = min(times)
-                    end_time = max(times)
-                    
-                    # Create new meeting
-                    new_meeting = Meeting(
-                        group_id=group_id,
-                        title=f"Meeting {meeting_date}",
-                        description=f"Auto-clustered meeting for {len(photos_for_date)} photos",
-                        start_time=start_time,
-                        end_time=end_time,
-                        meeting_date=meeting_date,
-                        photo_count=len(photos_for_date),
-                        participant_count=0,
-                        created_at=datetime.utcnow(),
-                        updated_at=datetime.utcnow(),
-                    )
-                    session.add(new_meeting)
-                    session.flush()  # Get ID
-                    
-                    # Move photos to this meeting
-                    for photo_data in photos_for_date:
-                        photo = session.get(Photo, photo_data["id"])
-                        if photo:
-                            photo.meeting_id = new_meeting.id
-                            session.add(photo)
-                            photos_moved += 1
-                    
-                    meetings_created += 1
-                    logger.info(f"Created meeting {new_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
-                
-                # Emit metrics for monitoring
-                _emit_metric("total_photos_processed", photos_moved, tags={"group_id": group_id})
-                _emit_metric("total_meetings_created", meetings_created, tags={"group_id": group_id})
-                
-                # Step 4: Update Default Meeting count
-                remaining_photos = session.exec(
-                    select(Photo).where(Photo.meeting_id == default_meeting.id)
-                ).all()
-                default_meeting.photo_count = len(remaining_photos)
-                default_meeting.updated_at = datetime.utcnow()
-                session.add(default_meeting)
-                
-                logger.info(f"Batch clustering completed for group {group_id}: "
-                          f"{meetings_created} meetings created, {photos_moved} photos moved")
-                
-            # Transaction committed automatically here
+                meetings_created += 1
+                logger.info(f"Created meeting {new_meeting.id} for {len(photos_for_date)} photos on {meeting_date}")
+            
+            # Emit metrics for monitoring
+            _emit_metric("total_photos_processed", photos_moved, tags={"group_id": group_id})
+            _emit_metric("total_meetings_created", meetings_created, tags={"group_id": group_id})
+            
+            # Step 4: Update Default Meeting count
+            remaining_photos = session.exec(
+                select(Photo).where(Photo.meeting_id == default_meeting.id)
+            ).all()
+            default_meeting.photo_count = len(remaining_photos)
+            default_meeting.updated_at = datetime.utcnow()
+            session.add(default_meeting)
+            
+            # Commit all changes
+            session.commit()
+            
+            logger.info(f"Batch clustering completed for group {group_id}: "
+                      f"{meetings_created} meetings created, {photos_moved} photos moved")
             return True
+        
+        except Exception as inner_e:
+            logger.error(f"Batch clustering failed for group {group_id}: {inner_e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
                 
     except Exception as e:
-        logger.error(f"Batch clustering failed for group {group_id}: {e}")
+        logger.error(f"Failed to create session for batch clustering group {group_id}: {e}")
         return False
 
 
