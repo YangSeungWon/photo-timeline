@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Enhanced Burst Upload Test Script
-# Tests the debounced clustering functionality with edge case scenarios
+# ================================
+# 🧪 ENHANCED Photo Timeline Burst Upload Test
+# ================================
+# Tests the robustness of our debounced clustering system
+# Validates: Transaction safety, datetime fixes, Redis resilience
 
-set -e
+set -e  # Exit on any error
 
 # Configuration
 API_BASE_URL="${API_BASE_URL:-http://localhost:8000}"

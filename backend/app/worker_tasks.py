@@ -346,16 +346,16 @@ def _mark_cluster_pending(group_id: str) -> None:
     """
     Mark group for debounced clustering using Redis TTL.
     
-    Enhanced with fallback strategy:
+    Enhanced with fallback strategy and robust Redis key management:
     - Primary: Redis-based debounced clustering  
-    - Fallback: Legacy incremental clustering when Redis unavailable
+    - Fallback: Accumulate in Default Meeting for batch processing
+    - Safe TTL management to prevent infinite busy states
     """
     if not redis_client:
-        logger.warning(f"Redis not available for group {group_id}, using legacy incremental clustering")
-        # Fallback: Use legacy incremental clustering (rough but immediate)
-        # This ensures photos get basic clustering even without Redis
+        logger.warning(f"Redis not available for group {group_id}, will rely on batch clustering")
+        # Fallback: Let photos accumulate in Default Meeting for batch processing
         # Later batch clustering will optimize the results
-        return  # Let the photo stay in Default Meeting for batch processing
+        return
     
     try:
         ttl = settings.CLUSTER_DEBOUNCE_TTL
@@ -366,7 +366,7 @@ def _mark_cluster_pending(group_id: str) -> None:
         count_key = f"cluster:count:{group_id}"
         job_key = f"cluster:job:{group_id}"
         
-        # Extend activity window
+        # Extend activity window with TTL
         redis_client.setex(pending_key, ttl, "1")
         redis_client.incr(count_key)  # Statistics (optional)
         
@@ -375,26 +375,24 @@ def _mark_cluster_pending(group_id: str) -> None:
             try:
                 # Schedule the debounced clustering job
                 default_queue.enqueue_in(
-                    delay,
+                    delay,  # int seconds (not datetime)
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300  # 5 minutes timeout
                 )
-                # Mark that job is scheduled (prevent duplicate scheduling)
-                redis_client.setex(job_key, ttl + delay + 10, "1")  # Extra buffer
-                logger.info(f"Scheduled debounced clustering for group {group_id}")
+                # Mark that job is scheduled with longer TTL to prevent duplicate scheduling
+                redis_client.setex(job_key, ttl + delay + 30, "1")  # Extra buffer for safety
+                logger.info(f"Scheduled debounced clustering for group {group_id} in {delay}s")
             except Exception as e:
                 logger.error(f"Failed to schedule cluster job for group {group_id}: {e}")
-                # If job scheduling fails, fall back to immediate batch clustering
-                logger.warning(f"Fallback: immediate clustering for group {group_id}")
-                _cluster_group_photos_batch(group_id)
+                # If job scheduling fails, clean up and fall back to batch processing
+                redis_client.delete(job_key)
+                logger.warning(f"Will rely on periodic batch clustering for group {group_id}")
                 
     except Exception as e:
         logger.error(f"Redis operation failed for group {group_id}: {e}")
-        # Complete Redis failure - fall back to legacy approach
-        logger.warning(f"Redis failure, using legacy clustering for group {group_id}")
-        # Could optionally trigger immediate batch clustering here
-        # For now, let it accumulate in Default Meeting for batch processing
+        # Complete Redis failure - fall back to batch processing
+        logger.warning(f"Redis failure, will rely on batch clustering for group {group_id}")
 
 
 def cluster_if_quiet(group_id: str) -> bool:
@@ -404,8 +402,9 @@ def cluster_if_quiet(group_id: str) -> bool:
     
     Enhanced with safety checks:
     - Prevents infinite busy state with TTL limits
-    - Handles Redis failures gracefully
+    - Handles Redis failures gracefully  
     - Ensures job cleanup and retry on failure
+    - Automatic TTL extension for edge cases
     """
     if not redis_client:
         logger.warning("Redis not available, performing clustering anyway")
@@ -421,14 +420,18 @@ def cluster_if_quiet(group_id: str) -> bool:
         ttl = redis_client.ttl(pending_key)
         delay = settings.CLUSTER_RETRY_DELAY
         
-        # Safety: if TTL is very low, don't reschedule - proceed with clustering
-        if ttl >= 0 and ttl < delay * 2:
+        # Safety: if TTL is very low (< 2 seconds), slightly extend it but proceed
+        if ttl >= 0 and ttl < 2:
+            logger.info(f"Group {group_id} TTL very low ({ttl}s), extending slightly but proceeding")
+            redis_client.expire(pending_key, settings.CLUSTER_DEBOUNCE_TTL)
+        # If TTL is reasonable but low, proceed with clustering to avoid infinite wait
+        elif ttl >= 0 and ttl < delay:
             logger.info(f"Group {group_id} TTL low ({ttl}s), proceeding with clustering")
         else:
-            # Normal reschedule
+            # Normal reschedule - still busy with healthy TTL
             try:
                 default_queue.enqueue_in(
-                    delay,
+                    delay,  # int seconds
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300
@@ -439,7 +442,7 @@ def cluster_if_quiet(group_id: str) -> bool:
             except Exception as e:
                 logger.error(f"Failed to reschedule cluster job for group {group_id}: {e}")
                 # If can't reschedule, proceed with clustering anyway
-                logger.warning(f"Proceeding with immediate clustering for group {group_id}")
+                logger.warning(f"Reschedule failed, proceeding with immediate clustering for group {group_id}")
     
     # Group is quiet (or forced due to edge cases) - perform clustering
     try:
@@ -463,11 +466,11 @@ def cluster_if_quiet(group_id: str) -> bool:
             logger.error(f"Batch clustering failed for group {group_id}")
             _emit_metric("total_clustering_failures", tags={"group_id": group_id})
             
-            # Schedule retry on failure (fail-fast with retry)
+            # Schedule retry on failure with exponential backoff
             try:
                 retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # Longer delay for retry
                 default_queue.enqueue_in(
-                    retry_delay,
+                    retry_delay,  # int seconds
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300
@@ -475,8 +478,9 @@ def cluster_if_quiet(group_id: str) -> bool:
                 logger.info(f"Scheduled retry clustering for group {group_id} in {retry_delay}s")
             except Exception as retry_e:
                 logger.error(f"Failed to schedule retry for group {group_id}: {retry_e}")
+                # Clean up keys if can't retry
+                redis_client.delete(count_key, job_key, pending_key)
             
-            # Don't cleanup keys on failure - let retry handle it
             return False
         
     except Exception as e:
@@ -485,9 +489,9 @@ def cluster_if_quiet(group_id: str) -> bool:
         
         # Schedule retry on unexpected error
         try:
-            retry_delay = settings.CLUSTER_RETRY_DELAY * 2
+            retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # int calculation
             default_queue.enqueue_in(
-                retry_delay,
+                retry_delay,  # int seconds
                 cluster_if_quiet,
                 group_id=group_id,
                 job_timeout=300
@@ -659,7 +663,10 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
     """
     Complete batch reclustering for the entire group.
     
-    This is the core function that handles:
+    This function creates its own database session to avoid transaction conflicts
+    with the calling process_photo() session.
+    
+    Steps:
     1. All photos with timestamps → proper meetings
     2. Photos without timestamps → stay in Default Meeting
     3. Merge duplicate meetings on same date
@@ -668,6 +675,7 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
     Designed to be idempotent and handle any edge cases.
     """
     try:
+        # Create separate session to avoid transaction conflicts
         with Session(engine) as session:
             logger.info(f"Starting batch clustering for group {group_id}")
             
@@ -791,7 +799,9 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                 
                 logger.info(f"Batch clustering completed for group {group_id}: "
                           f"{meetings_created} meetings created, {photos_moved} photos moved")
-                return True
+                
+            # Transaction committed automatically here
+            return True
                 
     except Exception as e:
         logger.error(f"Batch clustering failed for group {group_id}: {e}")
@@ -905,3 +915,78 @@ def cleanup_failed_upload(photo_id: str, file_path: str) -> bool:
     except Exception as e:
         logger.error(f"Cleanup failed for photo {photo_id}: {e}")
         return False
+
+
+def get_clustering_metrics() -> Dict[str, Any]:
+    """
+    Get current clustering system metrics and health status.
+    Useful for monitoring and debugging.
+    """
+    try:
+        metrics = {
+            "internal_counters": clustering_metrics.copy(),
+            "redis_connected": redis_client is not None,
+            "settings": {
+                "CLUSTER_DEBOUNCE_TTL": settings.CLUSTER_DEBOUNCE_TTL,
+                "CLUSTER_RETRY_DELAY": settings.CLUSTER_RETRY_DELAY,
+                "CLUSTER_MAX_RETRIES": settings.CLUSTER_MAX_RETRIES,
+                "MEETING_GAP_HOURS": settings.MEETING_GAP_HOURS,
+            }
+        }
+        
+        if redis_client:
+            # Get active Redis keys for all groups
+            pending_keys = redis_client.keys("cluster:pending:*")
+            job_keys = redis_client.keys("cluster:job:*") 
+            count_keys = redis_client.keys("cluster:count:*")
+            
+            metrics["redis_status"] = {
+                "pending_groups": len(pending_keys),
+                "scheduled_jobs": len(job_keys),
+                "active_counts": len(count_keys),
+                "sample_keys": {
+                    "pending": pending_keys[:3],  # Show first 3
+                    "jobs": job_keys[:3],
+                    "counts": count_keys[:3],
+                }
+            }
+        else:
+            metrics["redis_status"] = "disconnected"
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"Failed to get clustering metrics: {e}")
+        return {"error": str(e)}
+
+
+def cleanup_stale_redis_keys(max_age_seconds: int = 3600) -> int:
+    """
+    Clean up Redis keys that might be left over from crashed workers.
+    Returns number of keys cleaned up.
+    """
+    if not redis_client:
+        return 0
+    
+    cleaned = 0
+    try:
+        # Find job keys without corresponding pending keys (orphaned jobs)
+        job_keys = redis_client.keys("cluster:job:*")
+        for job_key in job_keys:
+            group_id = job_key.split(":")[-1]
+            pending_key = f"cluster:pending:{group_id}"
+            
+            # If job key exists but no pending key, it might be stale
+            if not redis_client.exists(pending_key):
+                ttl = redis_client.ttl(job_key)
+                # If TTL is very high, it might be stale from a crashed worker
+                if ttl > max_age_seconds:
+                    redis_client.delete(job_key)
+                    cleaned += 1
+                    logger.info(f"Cleaned up stale job key: {job_key}")
+        
+        return cleaned
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup stale Redis keys: {e}")
+        return 0
