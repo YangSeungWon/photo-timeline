@@ -14,13 +14,21 @@ redis_conn = Redis(
     decode_responses=False,
 )
 
-# Default queue for background tasks
+# Default queue for background tasks (photo processing, thumbnails, etc.)
 default_queue = Queue("default", connection=redis_conn)
+
+# Dedicated queue for clustering operations (prevents congestion during burst uploads)
+cluster_queue = Queue("cluster", connection=redis_conn)
 
 
 def get_queue() -> Queue:
     """Get the default queue for background tasks."""
     return default_queue
+
+
+def get_cluster_queue() -> Queue:
+    """Get the dedicated cluster queue for photo clustering operations."""
+    return cluster_queue
 
 
 def test_redis_connection() -> bool:

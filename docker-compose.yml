@@ -57,7 +57,7 @@ services:
       backend:
         condition: service_healthy
 
-  # --- Background Worker (RQ) ---
+  # --- Background Worker (RQ) - Main worker for photo processing ---
   worker:
     build:
       context: .
@@ -72,6 +72,30 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      backend:
+        condition: service_healthy
+
+  # --- Cluster Worker (RQ) - Dedicated worker for clustering operations ---
+  worker-cluster:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["rq", "worker", "cluster", "--url", "redis://redis:6379/0"]
+    restart: on-failure
+    volumes:
+      - ./backend:/app
+      - storage_data:/srv/photo-timeline/storage
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres/phototimeline
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - PYTHONPATH=/app
     depends_on:
       postgres:
         condition: service_healthy

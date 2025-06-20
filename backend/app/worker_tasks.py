@@ -12,7 +12,7 @@ import time
 
 from .core.database import engine
 from .core.thumbs import create_thumbnail
-from .core.queues import default_queue
+from .core.queues import default_queue, get_cluster_queue
 from .core.config import settings
 from .models.photo import Photo
 from .models.meeting import Meeting
@@ -345,6 +345,19 @@ def _generate_thumbnail(session: Session, photo: Photo, file_path: Path) -> bool
         return False
 
 
+def _require_redis() -> bool:
+    """Check if Redis is available and responsive."""
+    if not redis_client:
+        logger.error("❌ REDIS: redis_client is None (init 실패)")
+        return False
+    try:
+        redis_client.ping()
+        return True
+    except Exception as e:
+        logger.error(f"❌ REDIS: ping 실패 – {e}")
+        return False
+
+
 def _mark_cluster_pending(group_id: str) -> None:
     """
     Mark group for debounced clustering using Redis TTL.
@@ -356,15 +369,22 @@ def _mark_cluster_pending(group_id: str) -> None:
     """
     logger.info(f"🔍 DEBUG: _mark_cluster_pending called for group {group_id}")
     
-    if not redis_client:
-        logger.warning(f"❌ REDIS: Redis client not available for group {group_id}, will rely on batch clustering")
+    # Enhanced Redis availability check
+    if not _require_redis():
+        logger.warning(f"❌ REDIS: Redis unavailable for group {group_id}, falling back to Default Meeting")
         return
     
     logger.info(f"✅ REDIS: Redis client available, proceeding with clustering setup for group {group_id}")
     
     try:
-        ttl = settings.CLUSTER_DEBOUNCE_TTL
-        delay = settings.CLUSTER_RETRY_DELAY
+        # Safe TTL values with minimum guarantees
+        ttl = max(settings.CLUSTER_DEBOUNCE_TTL, 5)  # Minimum 5 seconds
+        delay = max(settings.CLUSTER_RETRY_DELAY, 3)  # Minimum 3 seconds
+        
+        if settings.CLUSTER_DEBOUNCE_TTL < 5:
+            logger.warning(f"⚠️ REDIS: CLUSTER_DEBOUNCE_TTL ({settings.CLUSTER_DEBOUNCE_TTL}) too low, using {ttl}s")
+        if settings.CLUSTER_RETRY_DELAY < 3:
+            logger.warning(f"⚠️ REDIS: CLUSTER_RETRY_DELAY ({settings.CLUSTER_RETRY_DELAY}) too low, using {delay}s")
         
         # Mark activity with TTL
         pending_key = f"cluster:pending:{group_id}"
@@ -395,8 +415,9 @@ def _mark_cluster_pending(group_id: str) -> None:
                 logger.info(f"🎯 REDIS: Job key doesn't exist, scheduling clustering job for group {group_id}")
                 logger.info(f"📅 REDIS: Calling enqueue_in(delay={delay}, func=cluster_if_quiet, group_id={group_id})")
                 
-                # Schedule the debounced clustering job
-                job = default_queue.enqueue_in(
+                # Schedule the debounced clustering job on dedicated cluster queue
+                cluster_queue = get_cluster_queue()
+                job = cluster_queue.enqueue_in(
                     timedelta(seconds=delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
@@ -471,7 +492,8 @@ def cluster_if_quiet(group_id: str) -> bool:
         else:
             # Normal reschedule - still busy with healthy TTL
             try:
-                default_queue.enqueue_in(
+                cluster_queue = get_cluster_queue()
+                cluster_queue.enqueue_in(
                     timedelta(seconds=delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
@@ -510,7 +532,8 @@ def cluster_if_quiet(group_id: str) -> bool:
             # Schedule retry on failure with exponential backoff
             try:
                 retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # Longer delay for retry
-                default_queue.enqueue_in(
+                cluster_queue = get_cluster_queue()
+                cluster_queue.enqueue_in(
                     timedelta(seconds=retry_delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
@@ -531,7 +554,8 @@ def cluster_if_quiet(group_id: str) -> bool:
         # Schedule retry on unexpected error
         try:
             retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # int calculation
-            default_queue.enqueue_in(
+            cluster_queue = get_cluster_queue()
+            cluster_queue.enqueue_in(
                 timedelta(seconds=retry_delay),  # Use timedelta, not int
                 cluster_if_quiet,
                 group_id=group_id,
