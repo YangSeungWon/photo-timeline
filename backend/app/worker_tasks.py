@@ -176,9 +176,13 @@ def _extract_exif_data(session: Session, photo: Photo, file_path: Path) -> bool:
             logger.info(f"Found GPS coordinates for photo {photo.id}: lat={lat}, lon={lon}")
             
             if lat is not None and lon is not None:
+                # Store individual GPS coordinates
+                photo.gps_latitude = float(lat)
+                photo.gps_longitude = float(lon)
+                
                 # PostGIS Geometry (srid = 4326) 로 저장해야 to_shape() 가 동작
                 photo.point_gps = WKTElement(f"POINT({lon} {lat})", srid=4326)
-                logger.info(f"Set point_gps for photo {photo.id}: POINT({lon} {lat}) with SRID 4326")
+                logger.info(f"Set GPS fields for photo {photo.id}: lat={lat}, lon={lon}, point_gps=POINT({lon} {lat}) with SRID 4326")
             else:
                 logger.warning(f"GPS coordinates are None for photo {photo.id}")
         else:
