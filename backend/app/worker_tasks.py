@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
-from sqlalchemy import text
+from sqlalchemy import text, func
 from geoalchemy2.shape import to_shape
 from geoalchemy2 import WKTElement
 import redis
@@ -28,6 +28,68 @@ clustering_metrics = {
     "total_clustering_failures": 0,
     "debounce_reschedules": 0,
 }
+
+def recount_meeting(session: Session, meeting_id: str) -> int:
+    """
+    Recalculate photo_count for a meeting by counting actual photos.
+    This is the ONLY safe way to update photo_count - no more += or -=
+    
+    Args:
+        session: Database session
+        meeting_id: UUID of the meeting to recount
+        
+    Returns:
+        New photo count
+    """
+    try:
+        # Count actual photos in this meeting
+        count = session.exec(
+            select(func.count(Photo.id)).where(Photo.meeting_id == meeting_id)
+        ).scalar_one_or_none() or 0
+        
+        # Update meeting record
+        meeting = session.get(Meeting, meeting_id)
+        if meeting:
+            old_count = meeting.photo_count
+            meeting.photo_count = count
+            meeting.updated_at = datetime.utcnow()
+            session.add(meeting)
+            
+            if old_count != count:
+                logger.info(f"Recounted meeting {meeting_id} ({meeting.title}): {old_count} → {count}")
+            
+        return count
+    except Exception as e:
+        logger.error(f"Failed to recount meeting {meeting_id}: {e}")
+        return 0
+
+def recount_all_meetings_in_group(session: Session, group_id: str) -> Dict[str, int]:
+    """
+    Recount photo_count for ALL meetings in a group.
+    Call this at the end of any clustering operation.
+    
+    Args:
+        session: Database session  
+        group_id: UUID of the group
+        
+    Returns:
+        Dict mapping meeting_id -> new_count
+    """
+    try:
+        results = {}
+        meetings = session.exec(
+            select(Meeting).where(Meeting.group_id == group_id)
+        ).all()
+        
+        for meeting in meetings:
+            new_count = recount_meeting(session, meeting.id)
+            results[str(meeting.id)] = new_count
+            
+        logger.info(f"Recounted {len(results)} meetings in group {group_id}")
+        return results
+    except Exception as e:
+        logger.error(f"Failed to recount meetings in group {group_id}: {e}")
+        return {}
 
 def _emit_metric(metric_name: str, value: int = 1, tags: Dict[str, str] = None) -> None:
     """Emit metrics to monitoring system (placeholder for StatsD/Prometheus)."""
@@ -709,18 +771,10 @@ def _attach_incremental_legacy(session: Session, photo: Photo) -> bool:
 
 
 def _update_default_meeting_count(session: Session, group_id: str, delta: int) -> None:
-    """Update Default Meeting photo count safely."""
-    default_meeting = session.exec(
-        select(Meeting).where(
-            Meeting.group_id == group_id,
-            Meeting.title == "Default Meeting"
-        )
-    ).first()
-    
-    if default_meeting:
-        default_meeting.photo_count = max(0, default_meeting.photo_count + delta)
-        default_meeting.updated_at = datetime.utcnow()
-        session.add(default_meeting)
+    """DEPRECATED: Legacy function - use recount_meeting() instead."""
+    logger.warning("_update_default_meeting_count() is deprecated - use recount_meeting() instead")
+    # This function is kept for compatibility but does nothing
+    # All photo_count updates should use recount_meeting() for consistency
 
 
 def _schedule_group_clustering(group_id: str) -> None:
@@ -807,7 +861,6 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             ).all()
             
             # Actually, let's be more careful - only delete empty meetings
-            from sqlalchemy import func
             empty_meetings = []
             for meeting in auto_meetings:
                 photo_count = session.exec(
@@ -850,7 +903,7 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                 if existing:          # ▷ UPDATE / MERGE
                     existing.start_time = min(existing.start_time, start_time)
                     existing.end_time   = max(existing.end_time,   end_time)
-                    existing.photo_count += len(photos_for_date)
+                    # DON'T modify photo_count here - will recount at the end
                     existing.updated_at  = datetime.utcnow()
                     target_meeting = existing
                     session.add(existing)
@@ -863,7 +916,7 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                         start_time=start_time,
                         end_time=end_time,
                         meeting_date=meeting_date,
-                        photo_count=len(photos_for_date),
+                        photo_count=0,  # Will be recounted at the end
                         participant_count=0,
                         created_at=datetime.utcnow(),
                         updated_at=datetime.utcnow(),
@@ -885,13 +938,10 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
             _emit_metric("total_photos_processed", photos_moved, tags={"group_id": group_id})
             _emit_metric("total_meetings_created", meetings_created, tags={"group_id": group_id})
             
-            # Step 4: Update Default Meeting count
-            remaining_photos = session.exec(
-                select(Photo).where(Photo.meeting_id == default_meeting.id)
-            ).all()
-            default_meeting.photo_count = len(remaining_photos)
-            default_meeting.updated_at = datetime.utcnow()
-            session.add(default_meeting)
+            # Step 4: RECOUNT ALL meetings in the group (the ONLY safe way)
+            # This eliminates all photo_count inconsistencies
+            recount_results = recount_all_meetings_in_group(session, group_id)
+            logger.info(f"Recounted photo_count for group {group_id}: {recount_results}")
             
             # Commit all changes
             session.commit()
@@ -940,7 +990,7 @@ def _get_or_create_default_meeting(session: Session, group_id: str) -> Meeting:
 
 
 def _update_meeting_from_photos(session: Session, meeting: Meeting, clustered_photos: list) -> None:
-    """Update meeting time range and count based on clustered photos."""
+    """Update meeting time range based on clustered photos. DON'T update photo_count here."""
     if not clustered_photos:
         return
     
@@ -948,15 +998,15 @@ def _update_meeting_from_photos(session: Session, meeting: Meeting, clustered_ph
     times = [photo["DateTimeOriginal"] for photo in clustered_photos]
     meeting.start_time = min(times)
     meeting.end_time = max(times)
-    meeting.photo_count = len(clustered_photos)
+    # DON'T set photo_count here - use recount_meeting() instead
     meeting.updated_at = datetime.utcnow()
     
     session.add(meeting)
-    logger.info(f"Updated meeting {meeting.id} with {len(clustered_photos)} photos")
+    logger.info(f"Updated meeting {meeting.id} time range with {len(clustered_photos)} photos")
 
 
 def _create_meeting_from_photos(session: Session, group_id: str, meeting_date, clustered_photos: list) -> Meeting:
-    """Create new meeting from clustered photos."""
+    """Create new meeting from clustered photos. DON'T set photo_count here."""
     if not clustered_photos:
         return None
     
@@ -971,7 +1021,7 @@ def _create_meeting_from_photos(session: Session, group_id: str, meeting_date, c
         start_time=start_time,
         end_time=end_time,
         meeting_date=meeting_date,
-        photo_count=len(clustered_photos),
+        photo_count=0,  # Will be recounted later
         participant_count=0,
     )
     session.add(new_meeting)

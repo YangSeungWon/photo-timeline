@@ -17,7 +17,7 @@ from ..models.membership import Membership, MembershipStatus
 from ..models.photo import Photo
 from ..models.meeting import Meeting
 from ..schemas.photo import PhotoResponse, PhotoUploadResponse
-from ..worker_tasks import process_photo
+from ..worker_tasks import process_photo, recount_meeting
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +96,8 @@ async def upload_photo(
 
     db.add(photo)
     
-    # Update default meeting photo count
-    default_meeting.photo_count += 1
+    # NOTE: Don't modify photo_count here! Worker will recount after clustering
+    # This eliminates double-counting and ensures consistency
     default_meeting.updated_at = datetime.utcnow()
     
     db.commit()
@@ -327,3 +327,69 @@ async def get_photo_thumbnail(
         media_type=photo.mime_type or "image/jpeg",
         filename=photo.filename_thumb
     )
+
+
+@router.delete("/{photo_id}")
+async def delete_photo(
+    photo_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Delete a photo and recount meeting photo_count."""
+    # Get photo
+    photo = db.exec(select(Photo).where(Photo.id == photo_id)).first()
+    if not photo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Photo not found"
+        )
+
+    # Check group membership
+    membership = db.exec(
+        select(Membership).where(
+            Membership.user_id == current_user.id,
+            Membership.group_id == photo.group_id,
+            Membership.status == MembershipStatus.ACTIVE,
+        )
+    ).first()
+
+    if not membership:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this group",
+        )
+
+    # Store meeting_id before deletion
+    meeting_id = photo.meeting_id
+    
+    # Delete files
+    try:
+        # Delete original file
+        orig_path = Path("/srv/photo-timeline/storage") / str(photo.group_id) / photo.filename_orig
+        if orig_path.exists():
+            orig_path.unlink()
+            logger.info(f"Deleted original file: {orig_path}")
+        
+        # Delete thumbnail file
+        if photo.filename_thumb:
+            thumb_path = Path("/srv/photo-timeline/storage") / str(photo.group_id) / photo.filename_thumb
+            if thumb_path.exists():
+                thumb_path.unlink()
+                logger.info(f"Deleted thumbnail file: {thumb_path}")
+    except Exception as e:
+        logger.warning(f"Failed to delete files for photo {photo_id}: {e}")
+        # Continue with database deletion even if file deletion fails
+
+    # Delete photo record
+    db.delete(photo)
+    db.commit()
+    
+    # Recount meeting photo_count (the SAFE way)
+    if meeting_id:
+        try:
+            new_count = recount_meeting(db, meeting_id)
+            db.commit()
+            logger.info(f"Recounted meeting {meeting_id} after photo deletion: {new_count} photos")
+        except Exception as e:
+            logger.error(f"Failed to recount meeting {meeting_id} after photo deletion: {e}")
+
+    return {"message": "Photo deleted successfully"}
