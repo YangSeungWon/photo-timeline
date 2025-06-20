@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     AUTO_CREATE_TABLES: bool = True
 
     # JWT Authentication - 보안상 중요한 설정
-    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32))
+    SECRET_KEY: str = Field(default="", description="JWT secret key - should be set in .env file")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     MAIL_SECURE: bool = True  # Use TLS
     MAIL_FROM: str = ""
     MAIL_FROM_NAME: str = "Photo Timeline"
+
+    def __post_init__(self):
+        """Validate settings after initialization."""
+        if not self.SECRET_KEY:
+            print("WARNING: SECRET_KEY not set in .env file. Generating a temporary one.")
+            print("For production, please set SECRET_KEY in your .env file.")
+            self.SECRET_KEY = secrets.token_urlsafe(32)
 
     class Config:
         env_file = ".env"
