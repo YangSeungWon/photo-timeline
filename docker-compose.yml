@@ -19,6 +19,8 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
       - AUTO_CREATE_TABLES=true
+      # JWT Security
+      - SECRET_KEY=${SECRET_KEY}
       # Email configuration
       - MAIL_HOST=smtp.gmail.com
       - MAIL_PORT=587
@@ -72,6 +74,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
+      - SECRET_KEY=${SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +107,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
       - PYTHONPATH=/app
+      - SECRET_KEY=${SECRET_KEY}
     depends_on:
       postgres:
         condition: service_healthy
