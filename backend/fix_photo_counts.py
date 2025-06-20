@@ -57,7 +57,7 @@ def fix_photo_counts(dry_run: bool = False, remove_empty: bool = False) -> dict:
         # Calculate total photos
         stats["total_photos"] = session.exec(
             select(func.count(Photo.id))
-        ).scalar_one_or_none() or 0
+        ).first() or 0
         
         print(f"🔍 Found {stats['total_meetings']} meetings, {stats['total_photos']} total photos")
         print("=" * 60)
@@ -68,7 +68,7 @@ def fix_photo_counts(dry_run: bool = False, remove_empty: bool = False) -> dict:
             # Count actual photos in this meeting
             actual_count = session.exec(
                 select(func.count(Photo.id)).where(Photo.meeting_id == meeting.id)
-            ).scalar_one_or_none() or 0
+            ).first() or 0
             
             stats["before_sum"] += meeting.photo_count
             

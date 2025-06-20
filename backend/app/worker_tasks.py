@@ -45,7 +45,7 @@ def recount_meeting(session: Session, meeting_id: str) -> int:
         # Count actual photos in this meeting
         count = session.exec(
             select(func.count(Photo.id)).where(Photo.meeting_id == meeting_id)
-        ).scalar_one_or_none() or 0
+        ).first() or 0
         
         # Update meeting record
         meeting = session.get(Meeting, meeting_id)
