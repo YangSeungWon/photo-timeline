@@ -33,13 +33,16 @@ def _emit_metric(metric_name: str, value: int = 1, tags: Dict[str, str] = None) 
     if not settings.ENABLE_CLUSTERING_METRICS:
         return
     
+    if tags is None:
+        tags = {}
+    
     # Update internal counters
     if metric_name in clustering_metrics:
         clustering_metrics[metric_name] += value
     
     # TODO: Send to actual monitoring system
     # statsd.increment(f"photo_timeline.clustering.{metric_name}", value, tags=tags)
-    logger.debug(f"Metric: {metric_name}={value} {tags or ''}")
+    logger.debug(f"Metric: {metric_name}={value} {tags}")
 
 logger = logging.getLogger(__name__)
 
@@ -351,11 +354,13 @@ def _mark_cluster_pending(group_id: str) -> None:
     - Fallback: Accumulate in Default Meeting for batch processing
     - Safe TTL management to prevent infinite busy states
     """
+    logger.info(f"🔍 DEBUG: _mark_cluster_pending called for group {group_id}")
+    
     if not redis_client:
-        logger.warning(f"Redis not available for group {group_id}, will rely on batch clustering")
-        # Fallback: Let photos accumulate in Default Meeting for batch processing
-        # Later batch clustering will optimize the results
+        logger.warning(f"❌ REDIS: Redis client not available for group {group_id}, will rely on batch clustering")
         return
+    
+    logger.info(f"✅ REDIS: Redis client available, proceeding with clustering setup for group {group_id}")
     
     try:
         ttl = settings.CLUSTER_DEBOUNCE_TTL
@@ -366,31 +371,67 @@ def _mark_cluster_pending(group_id: str) -> None:
         count_key = f"cluster:count:{group_id}"
         job_key = f"cluster:job:{group_id}"
         
-        # Extend activity window with TTL
-        redis_client.setex(pending_key, ttl, "1")
-        redis_client.incr(count_key)  # Statistics (optional)
+        logger.info(f"🔑 REDIS: Setting up keys - pending: {pending_key}, job: {job_key}, count: {count_key}")
+        logger.info(f"⏰ REDIS: TTL={ttl}s, delay={delay}s")
+        
+        # Set pending key with TTL
+        logger.info(f"📝 REDIS: Setting pending key '{pending_key}' with TTL {ttl}s")
+        redis_result = redis_client.setex(pending_key, ttl, "1")
+        logger.info(f"✅ REDIS: setex('{pending_key}', {ttl}, '1') -> {redis_result}")
+        
+        # Increment count
+        logger.info(f"📈 REDIS: Incrementing count key '{count_key}'")
+        count_result = redis_client.incr(count_key)
+        logger.info(f"✅ REDIS: incr('{count_key}') -> {count_result}")
+        
+        # Check if job key exists
+        logger.info(f"🔍 REDIS: Checking if job key '{job_key}' exists")
+        job_exists = redis_client.exists(job_key)
+        logger.info(f"✅ REDIS: exists('{job_key}') -> {job_exists}")
         
         # Schedule SINGLE job if not already scheduled
-        if not redis_client.exists(job_key):
+        if not job_exists:
             try:
+                logger.info(f"🎯 REDIS: Job key doesn't exist, scheduling clustering job for group {group_id}")
+                logger.info(f"📅 REDIS: Calling enqueue_in(delay={delay}, func=cluster_if_quiet, group_id={group_id})")
+                
                 # Schedule the debounced clustering job
-                default_queue.enqueue_in(
-                    delay,  # int seconds (not datetime)
+                job = default_queue.enqueue_in(
+                    timedelta(seconds=delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300  # 5 minutes timeout
                 )
+                logger.info(f"✅ REDIS: enqueue_in() successful, job_id={job.id}")
+                
                 # Mark that job is scheduled with longer TTL to prevent duplicate scheduling
-                redis_client.setex(job_key, ttl + delay + 30, "1")  # Extra buffer for safety
-                logger.info(f"Scheduled debounced clustering for group {group_id} in {delay}s")
+                job_ttl = ttl + delay + 30
+                logger.info(f"📝 REDIS: Setting job key '{job_key}' with TTL {job_ttl}s")
+                job_key_result = redis_client.setex(job_key, job_ttl, "1")
+                logger.info(f"✅ REDIS: setex('{job_key}', {job_ttl}, '1') -> {job_key_result}")
+                
+                logger.info(f"🎉 REDIS: Successfully scheduled debounced clustering for group {group_id} in {delay}s")
             except Exception as e:
-                logger.error(f"Failed to schedule cluster job for group {group_id}: {e}")
-                # If job scheduling fails, clean up and fall back to batch processing
-                redis_client.delete(job_key)
+                logger.error(f"❌ REDIS: Failed to schedule cluster job for group {group_id}: {e}")
+                logger.error(f"❌ REDIS: Exception type: {type(e).__name__}")
+                logger.error(f"❌ REDIS: Exception details: {str(e)}")
+                
+                # Clean up job key on failure
+                try:
+                    logger.info(f"🧹 REDIS: Cleaning up job key '{job_key}' due to scheduling failure")
+                    delete_result = redis_client.delete(job_key)
+                    logger.info(f"✅ REDIS: delete('{job_key}') -> {delete_result}")
+                except Exception as cleanup_e:
+                    logger.error(f"❌ REDIS: Failed to cleanup job key: {cleanup_e}")
+                
                 logger.warning(f"Will rely on periodic batch clustering for group {group_id}")
+        else:
+            logger.info(f"⏭️ REDIS: Job already scheduled for group {group_id}, skipping job creation")
                 
     except Exception as e:
-        logger.error(f"Redis operation failed for group {group_id}: {e}")
+        logger.error(f"❌ REDIS: Redis operation failed for group {group_id}: {e}")
+        logger.error(f"❌ REDIS: Exception type: {type(e).__name__}")
+        logger.error(f"❌ REDIS: Exception details: {str(e)}")
         # Complete Redis failure - fall back to batch processing
         logger.warning(f"Redis failure, will rely on batch clustering for group {group_id}")
 
@@ -431,7 +472,7 @@ def cluster_if_quiet(group_id: str) -> bool:
             # Normal reschedule - still busy with healthy TTL
             try:
                 default_queue.enqueue_in(
-                    delay,  # int seconds
+                    timedelta(seconds=delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300
@@ -470,7 +511,7 @@ def cluster_if_quiet(group_id: str) -> bool:
             try:
                 retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # Longer delay for retry
                 default_queue.enqueue_in(
-                    retry_delay,  # int seconds
+                    timedelta(seconds=retry_delay),  # Use timedelta, not int
                     cluster_if_quiet,
                     group_id=group_id,
                     job_timeout=300
@@ -491,7 +532,7 @@ def cluster_if_quiet(group_id: str) -> bool:
         try:
             retry_delay = settings.CLUSTER_RETRY_DELAY * 2  # int calculation
             default_queue.enqueue_in(
-                retry_delay,  # int seconds
+                timedelta(seconds=retry_delay),  # Use timedelta, not int
                 cluster_if_quiet,
                 group_id=group_id,
                 job_timeout=300
@@ -729,8 +770,8 @@ def _cluster_group_photos_batch(group_id: str) -> bool:
                 for meeting in auto_meetings:
                     photo_count = session.exec(
                         select(Photo).where(Photo.meeting_id == meeting.id)
-                    ).first()
-                    if not photo_count:
+                    ).count()
+                    if photo_count == 0:
                         empty_meetings.append(meeting)
                 
                 for meeting in empty_meetings:
