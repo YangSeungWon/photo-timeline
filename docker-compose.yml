@@ -63,6 +63,8 @@ services:
       dockerfile: backend/Dockerfile
     command: ["python", "-u", "worker.py"]
     restart: on-failure
+    deploy:
+      replicas: 8 # Scale workers for parallel photo processing (CPU cores / 2)
     volumes:
       - ./backend:/app
       - storage_data:/srv/photo-timeline/storage

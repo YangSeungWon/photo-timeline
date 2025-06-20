@@ -51,7 +51,11 @@ def main():
 
     try:
         with Connection(redis_conn):
-            worker = Worker(listen, name=f"worker-{os.getpid()}")
+            # Use container ID or hostname for unique worker names
+            import socket
+            hostname = socket.gethostname()
+            worker_name = f"worker-{hostname}-{os.getpid()}"
+            worker = Worker(listen, name=worker_name)
             logger.info(f"Worker {worker.name} started")
             worker.work(with_scheduler=False)
     except KeyboardInterrupt:

@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Install system dependencies including GPS processing tools
+# Install system dependencies including GPS processing tools and SIMD optimization libs
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
@@ -8,6 +8,10 @@ RUN apt-get update && apt-get install -y \
     exiftool \
     libimage-exiftool-perl \
     libheif1 \
+    libjpeg-dev \
+    zlib1g-dev \
+    libtiff5-dev \
+    libopenjp2-7-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -16,7 +20,11 @@ WORKDIR /app
 # Copy backend requirements first for better caching
 COPY backend/requirements.txt ./requirements.txt
 
-# Install Python dependencies
+# Uninstall regular Pillow and install Pillow-SIMD for faster image processing
+RUN pip uninstall -y pillow || true && \
+    pip install --no-cache-dir --force-reinstall pillow-simd
+
+# Install other Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the photo_core library and install it
